@@ -1,0 +1,16 @@
+[
+    {
+        "step_original": "SCENARIO: User explores the PupilLeader website and verifies key content",
+        "element_query": "User explores the PupilLeader website and verifies key content",
+        "status": "SUCCESS",
+        "action": "SCENARIO_MARKER",
+        "scenario_name": "User explores the PupilLeader website and verifies key content"
+    },
+    {
+        "step_original": "GOTO: https://pupilleader.com/",
+        "element_query": "https://pupilleader.com/",
+        "status": "FAILED",
+        "error": "Unexpected execution error: Page.goto: Timeout 30000ms exceeded.\nCall log:\n  - navigating to \"https://pupilleader.com/\", waiting until \"networkidle\"\n",
+        "step_index": 2
+    }
+]
