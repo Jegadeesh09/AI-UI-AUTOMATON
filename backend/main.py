@@ -494,17 +494,44 @@ def run_test(req: RunTestRequest):
     headless = config.get("HEADLESS_SCRIPT", True)
     
     try:
+        # Check for required pytest plugins
+        import importlib.metadata
+        plugins = {
+            "pytest-json-report": "--json-report",
+            "allure-pytest": "--alluredir"
+        }
+        missing_plugins = []
+        installed_packages = {pkg.metadata['Name'].lower(): pkg.version for pkg in importlib.metadata.distributions()}
+
+        for pkg_name in plugins:
+            if pkg_name not in installed_packages:
+                missing_plugins.append(pkg_name)
+
+        if missing_plugins:
+            msg = f"❌ Missing required pytest plugins: {', '.join(missing_plugins)}. Please run: pip install {' '.join(missing_plugins)}"
+            print(msg)
+            log_to_ui(msg, type="error")
+            # We continue but some features might fail
+
         # Run pytest using sys.executable to ensure the same environment
         pytest_command = [
             sys.executable, "-m", "pytest",
             abs_script_path,
-            f"--alluredir={allure_results_dir}",
-            "--clean-alluredir",
-            f"--json-report",
-            f"--json-report-file={json_report_path}",
             "--verbose"
         ]
         
+        if "allure-pytest" in installed_packages:
+            pytest_command.extend([
+                f"--alluredir={allure_results_dir}",
+                "--clean-alluredir"
+            ])
+
+        if "pytest-json-report" in installed_packages:
+            pytest_command.extend([
+                f"--json-report",
+                f"--json-report-file={json_report_path}"
+            ])
+
         if not headless:
             pytest_command.append("--headed")
         
@@ -539,22 +566,42 @@ def run_test(req: RunTestRequest):
 
         # Generate static Allure report
         try:
-            # Use npx allure to avoid hardcoded paths
+            # Use npx allure-commandline to avoid hardcoded paths
+            # Use forward slashes for paths to avoid syntax errors on Windows
+            results_dir_alt = allure_results_dir.replace("\\", "/")
+            report_dir_alt = report_dir.replace("\\", "/")
+
             # --yes is used to skip the installation prompt if allure-commandline is not yet installed
             gen_command = [
-                "npx", "--yes", "allure", "generate",
-                allure_results_dir,
-                "-o", report_dir,
+                "npx", "--yes", "allure-commandline", "generate",
+                results_dir_alt,
+                "-o", report_dir_alt,
                 "--clean"
             ]
-            print(f"📊 Generating Allure report: {' '.join(gen_command)}")
+
+            # For Windows shell=True, we should quote paths with spaces
+            if os.name == 'nt':
+                quoted_command = []
+                for arg in gen_command:
+                    if " " in arg:
+                        quoted_command.append(f'"{arg}"')
+                    else:
+                        quoted_command.append(arg)
+                full_cmd = " ".join(quoted_command)
+                print(f"📊 Generating Allure report: {full_cmd}")
+            else:
+                print(f"📊 Generating Allure report: {' '.join(gen_command)}")
+
             log_to_ui("📊 Generating Allure report...")
 
             # shell=True is required on Windows to find npx.cmd
-            # We don't capture output here to avoid hangs, but we check for success
-            subprocess.run(gen_command, check=True, shell=os.name == 'nt', timeout=60)
+            if os.name == 'nt':
+                subprocess.run(full_cmd, check=True, shell=True, timeout=90)
+            else:
+                subprocess.run(gen_command, check=True, shell=False, timeout=90)
+
             log_to_ui("✅ Allure report generated successfully.")
-            
+
         except Exception as e:
             error_msg = f"Failed to generate Allure report: {e}"
             print(error_msg)
