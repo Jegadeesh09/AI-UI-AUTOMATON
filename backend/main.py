@@ -948,8 +948,21 @@ def download_error_report(story_id: str, suite: str = "Default"):
 @app.get("/api/download-report/{story_id}")
 def download_report(story_id: str, suite: str = "Default"):
     # Allure generates index.html
-    report_path = os.path.join(BASE_DIR, "storage", "suites", suite, "reports", story_id, "index.html")
+    suites_dir = os.path.join(BASE_DIR, "storage", "suites")
     
+    # Try specified suite first
+    report_path = os.path.join(suites_dir, suite, "reports", story_id, "index.html")
+
+    # If not found, try to search across all suites
+    if not os.path.exists(report_path):
+        for s in os.listdir(suites_dir):
+            if os.path.isdir(os.path.join(suites_dir, s)):
+                candidate = os.path.join(suites_dir, s, "reports", story_id, "index.html")
+                if os.path.exists(candidate):
+                    report_path = candidate
+                    suite = s
+                    break
+
     if os.path.exists(report_path):
         return FileResponse(
             report_path,
@@ -958,9 +971,20 @@ def download_report(story_id: str, suite: str = "Default"):
         )
     
     # Fallback to checking the directory
-    report_dir = os.path.join(BASE_DIR, "storage", "suites", suite, "reports", story_id)
+    report_dir = os.path.join(suites_dir, suite, "reports", story_id)
     if not os.path.exists(report_dir):
-        raise HTTPException(status_code=404, detail="Report not found")
+        # Try finding directory across all suites as well
+        found = False
+        for s in os.listdir(suites_dir):
+            if os.path.isdir(os.path.join(suites_dir, s)):
+                candidate_dir = os.path.join(suites_dir, s, "reports", story_id)
+                if os.path.exists(candidate_dir):
+                    report_dir = candidate_dir
+                    suite = s
+                    found = True
+                    break
+        if not found:
+            raise HTTPException(status_code=404, detail="Report not found")
     
     # Fallback to ZIP
     memory_file = io.BytesIO()

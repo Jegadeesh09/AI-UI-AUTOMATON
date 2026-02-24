@@ -24,10 +24,10 @@ const DashboardTab = () => {
     avg_accuracy: 0, suites: [], history: [],
     ai_insights: { failure_summary: {}, recommendations: [] }
   });
-
-  const [selectedScenario, setSelectedScenario] = useState(null);
-  const [reportModal, setReportModal] = useState({ isOpen: false, url: '', storyId: '' });
   
+  const [selectedScenario, setSelectedScenario] = useState(null);
+  const [reportModal, setReportModal] = useState({ isOpen: false, url: '', storyId: '', suite: '' });
+
   const COLORS = ['#10b981', '#ef4444', '#6366f1', '#f59e0b', '#8b5cf6'];
 
   useEffect(() => {
@@ -249,7 +249,12 @@ const DashboardTab = () => {
                        <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          setReportModal({ isOpen: true, url: `http://localhost:8000${scen.report_url}`, storyId: story.story_id });
+                          setReportModal({
+                            isOpen: true,
+                            url: `http://localhost:8000${scen.report_url}`,
+                            storyId: story.story_id,
+                            suite: story.suite || suite.suite
+                          });
                         }}
                         className="p-2 hover:bg-zinc-700 rounded-lg text-zinc-500 hover:text-white transition-all"
                        >
@@ -429,6 +434,7 @@ await page.click('button#submit');`}
             onClose={() => setReportModal({ ...reportModal, isOpen: false })}
             reportUrl={reportModal.url}
             storyId={reportModal.storyId}
+            suite={reportModal.suite}
           />
           
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">

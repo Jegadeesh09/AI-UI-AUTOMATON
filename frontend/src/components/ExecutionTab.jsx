@@ -301,6 +301,7 @@ const ExecutionTab = ({ settings, onRefreshSettings }) => {
         onClose={() => setReportModal({ ...reportModal, isOpen: false })} 
         reportUrl={reportModal.url}
         storyId={reportModal.storyId}
+        suite={reportModal.suite}
       />
       
       <ScriptEditorModal 
