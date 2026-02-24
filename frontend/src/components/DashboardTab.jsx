@@ -170,21 +170,23 @@ const DashboardTab = () => {
           <h3 className="text-sm font-bold uppercase tracking-widest text-zinc-400 flex items-center gap-2 mb-6">
             <BarChart3 size={16} /> Story Performance
           </h3>
-          <div className="flex-1">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={storyPerformanceData} layout="vertical" margin={{ left: 40 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={false} />
-                <XAxis type="number" stroke="#52525b" fontSize={10} hide />
-                <YAxis dataKey="name" type="category" stroke="#52525b" fontSize={9} tickLine={false} width={80} />
-                <Tooltip
-                  cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                  contentStyle={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '8px', fontSize: '12px' }}
-                />
-                <Bar dataKey="passed" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} barSize={12} />
-                <Bar dataKey="failed" stackId="a" fill="#ef4444" radius={[0, 4, 4, 0]} barSize={12} />
-                <Bar dataKey="not_run" stackId="a" fill="#3f3f46" radius={[0, 4, 4, 0]} barSize={12} />
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+            <div style={{ height: Math.max(300, storyPerformanceData.length * 35) }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={storyPerformanceData} layout="vertical" margin={{ left: 40 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={false} />
+                  <XAxis type="number" stroke="#52525b" fontSize={10} hide />
+                  <YAxis dataKey="name" type="category" stroke="#52525b" fontSize={9} tickLine={false} width={80} />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                    contentStyle={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '8px', fontSize: '12px' }}
+                  />
+                  <Bar dataKey="passed" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} barSize={12} />
+                  <Bar dataKey="failed" stackId="a" fill="#ef4444" radius={[0, 4, 4, 0]} barSize={12} />
+                  <Bar dataKey="not_run" stackId="a" fill="#3f3f46" radius={[0, 4, 4, 0]} barSize={12} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
       </div>
@@ -207,7 +209,8 @@ const DashboardTab = () => {
          </div>
       </div>
 
-      <div className="surface rounded-xl border border-zinc-800 overflow-hidden bg-zinc-900/20">
+      <div className="surface rounded-xl border border-zinc-800 overflow-hidden bg-zinc-900/20 flex flex-col max-h-[500px]">
+        <div className="overflow-y-auto custom-scrollbar">
         <table className="w-full text-left text-sm border-collapse">
           <thead>
             <tr className="bg-black/40 border-b border-zinc-800">
@@ -264,9 +267,10 @@ const DashboardTab = () => {
                   </tr>
                 ))
               )
-            ).slice(0, 20)}
+            )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Drill-down Detail Panel */}
@@ -426,9 +430,8 @@ await page.click('button#submit');`}
   );
 
   return (
-    <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 h-full">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        <div className="lg:col-span-12 space-y-8 animate-in fade-in duration-500 pb-8">
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
+      <div className="flex flex-col h-full space-y-8 animate-in fade-in duration-500">
           <ReportModal
             isOpen={reportModal.isOpen}
             onClose={() => setReportModal({ ...reportModal, isOpen: false })}
@@ -437,9 +440,9 @@ await page.click('button#submit');`}
             suite={reportModal.suite}
           />
           
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 px-1">
             <div>
-              <h2 className="text-2xl font-bold tracking-tight">Analytics Dashboard</h2>
+              <h2 className="text-2xl font-bold tracking-tight text-white">Analytics Dashboard</h2>
               <div className="flex items-center gap-2 mt-1">
                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                  <p className="text-zinc-500 text-sm">Real-time intelligence from {stats.total_stories} stories across {stats.suites.length} suites</p>
@@ -471,7 +474,7 @@ await page.click('button#submit');`}
           </div>
 
           {/* View Tabs */}
-          <div className="flex border-b border-zinc-800 gap-8">
+          <div className="flex border-b border-zinc-800 gap-8 px-1">
             {[
               { id: 'executive', label: 'Executive View', icon: TrendingUp },
               { id: 'technical', label: 'Technical View', icon: Activity },
@@ -489,11 +492,12 @@ await page.click('button#submit');`}
             ))}
           </div>
 
-          {/* Render Active View */}
-          {activeView === 'executive' && renderExecutiveView()}
-          {activeView === 'technical' && renderTechnicalView()}
-          {activeView === 'ai' && renderAIView()}
-        </div>
+          {/* Render Active View in Scrollable Container */}
+          <div className="flex-1 overflow-y-auto custom-scrollbar pr-4 pb-12">
+            {activeView === 'executive' && renderExecutiveView()}
+            {activeView === 'technical' && renderTechnicalView()}
+            {activeView === 'ai' && renderAIView()}
+          </div>
       </div>
     </div>
   );

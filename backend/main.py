@@ -23,7 +23,6 @@ from typing import List, Optional
 from backend.config.config_manager import config_manager
 from backend.utils.file_util import read_file, get_file_structure
 from backend.utils.logger import set_broadcast_func, log_to_ui
-from backend.utils.report_gen import generate_extent_report
 from backend.agent.recorder_agent import recorder_agent
 
 # Use ThreadPoolExecutor for sync operations
@@ -655,33 +654,20 @@ def run_test(req: RunTestRequest):
             report_dir_alt = report_dir.replace("\\", "/")
 
             # --yes is used to skip the installation prompt if allure-commandline is not yet installed
+            # We use "allure" command as provided by allure-commandline package
             gen_command = [
                 "npx", "--yes", "allure-commandline", "generate",
-                results_dir_alt,
-                "-o", report_dir_alt,
+                f'"{results_dir_alt}"',
+                "-o", f'"{report_dir_alt}"',
                 "--clean"
             ]
 
-            # For Windows shell=True, we should quote paths with spaces
-            if os.name == 'nt':
-                quoted_command = []
-                for arg in gen_command:
-                    if " " in arg:
-                        quoted_command.append(f'"{arg}"')
-                    else:
-                        quoted_command.append(arg)
-                full_cmd = " ".join(quoted_command)
-                print(f"📊 Generating Allure report: {full_cmd}")
-            else:
-                print(f"📊 Generating Allure report: {' '.join(gen_command)}")
-
+            full_cmd = " ".join(gen_command)
+            print(f"📊 Generating Allure report: {full_cmd}")
             log_to_ui("📊 Generating Allure report...")
 
-            # shell=True is required on Windows to find npx.cmd
-            if os.name == 'nt':
-                subprocess.run(full_cmd, check=True, shell=True, timeout=90)
-            else:
-                subprocess.run(gen_command, check=True, shell=False, timeout=90)
+            # Use shell=True to ensure npx is found in the environment
+            subprocess.run(full_cmd, check=True, shell=True, timeout=90)
 
             log_to_ui("✅ Allure report generated successfully.")
 

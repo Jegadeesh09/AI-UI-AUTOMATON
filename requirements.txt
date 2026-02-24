@@ -11,9 +11,4 @@ pytest-json-report
 google-generativeai
 openai
 playwright
-clsx
-tailwind-merge
-lucide-react
-framer-motion
-axios
 allure-combine
