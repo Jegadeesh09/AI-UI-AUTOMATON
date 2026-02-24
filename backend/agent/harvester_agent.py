@@ -147,7 +147,10 @@ class HarvesterAgent:
             temp_dir_obj = None
             
             try:
-                print(f"   Attempting to launch Chrome (Channel: chrome, Exe: {executable_path})...")
+                launch_msg = f"   Attempting to launch browser (Headless: {headless}, Channel: chrome)..."
+                print(launch_msg)
+                log_to_ui(launch_msg)
+
                 context = await p.chromium.launch_persistent_context(
                     user_data_dir,
                     headless=headless,
@@ -156,9 +159,13 @@ class HarvesterAgent:
                     args=launch_args
                 )
             except Exception as e:
-                print(f"   ⚠️ Initial launch failed: {e}")
+                error_msg = f"   ⚠️ Initial launch failed: {e}"
+                print(error_msg)
+                log_to_ui(error_msg, type="error")
+
                 if ("lock" in str(e).lower() or "used by another" in str(e).lower()) and os.path.exists(user_data_dir):
                     print(f"   ⚠️ Profile locked, cloning to temporary directory...")
+                    log_to_ui("⚠️ Profile locked, cloning to temporary directory...")
                     temp_dir_obj = tempfile.TemporaryDirectory(prefix="chrome_profile_")
                     actual_user_data_dir = temp_dir_obj.name
                     try:
@@ -173,9 +180,11 @@ class HarvesterAgent:
                         )
                     except Exception as clone_e:
                         print(f"   ❌ Clone failed: {clone_e}. Falling back to bundled Chromium.")
+                        log_to_ui("❌ Clone failed. Falling back to bundled Chromium.", type="error")
                         context = await p.chromium.launch_persistent_context("", headless=headless)
                 else:
                     print(f"   ❌ Launch failed. Falling back to bundled Chromium.")
+                    log_to_ui("❌ Launch failed. Falling back to bundled Chromium.", type="error")
                     context = await p.chromium.launch_persistent_context("", headless=headless)
 
             page = context.pages[0] if context.pages else await context.new_page()

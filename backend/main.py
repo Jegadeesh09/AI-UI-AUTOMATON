@@ -512,37 +512,59 @@ def run_test(req: RunTestRequest):
         env = os.environ.copy()
         env["CURRENT_SUITE"] = suite
         
-        result = subprocess.run(
+        log_to_ui(f"🏃 Starting test execution for {story_id}...")
+
+        # We use subprocess.Popen to stream logs to the UI
+        process = subprocess.Popen(
             pytest_command,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=300,
-            env=env
+            env=env,
+            bufsize=1,
+            universal_newlines=True
         )
+
+        full_stdout = []
+        for line in iter(process.stdout.readline, ""):
+            line_str = line.strip()
+            if line_str:
+                print(f"pytest: {line_str}")
+                log_to_ui(line_str)
+                full_stdout.append(line_str)
+
+        process.stdout.close()
+        return_code = process.wait(timeout=300)
+        stdout_text = "\n".join(full_stdout)
 
         # Generate static Allure report
         try:
             # Use npx allure to avoid hardcoded paths
+            # --yes is used to skip the installation prompt if allure-commandline is not yet installed
             gen_command = [
-                "npx", "allure", "generate",
+                "npx", "--yes", "allure", "generate",
                 allure_results_dir,
                 "-o", report_dir,
                 "--clean"
             ]
             print(f"📊 Generating Allure report: {' '.join(gen_command)}")
+            log_to_ui("📊 Generating Allure report...")
+
             # shell=True is required on Windows to find npx.cmd
-            subprocess.run(gen_command, capture_output=True, check=True, shell=os.name == 'nt')
+            # We don't capture output here to avoid hangs, but we check for success
+            subprocess.run(gen_command, check=True, shell=os.name == 'nt', timeout=60)
+            log_to_ui("✅ Allure report generated successfully.")
             
-            # Since allure generate creates many files, and we want to serve it,
-            # we should check if index.html is there.
         except Exception as e:
-            print(f"Failed to generate Allure report: {e}")
+            error_msg = f"Failed to generate Allure report: {e}"
+            print(error_msg)
+            log_to_ui(error_msg, type="error")
         
         return {
-            "success": result.returncode == 0,
-            "exit_code": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
+            "success": return_code == 0,
+            "exit_code": return_code,
+            "stdout": stdout_text,
+            "stderr": "",
             "report_url": f"/suites/{suite}/reports/{story_id}/index.html"
         }
     except subprocess.TimeoutExpired:
