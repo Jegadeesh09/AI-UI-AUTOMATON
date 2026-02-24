@@ -1,5 +1,5 @@
 {
-    "GEMINI_API_KEY": "AIzaSyDzxJC2rD4LHOrnyd0nX36swdHop8o9Rq0",
+    "GEMINI_API_KEY": "AIzaSyDzxJC2rD",
     "GPT_API_KEY": "",
     "DEEPSEEK_API_KEY": "",
     "OLLAMA_BASE_URL": "http://localhost:11434",
@@ -14,4 +14,5 @@
         "moondream",
         "starcoder2:7b"
     ]
+
 }
