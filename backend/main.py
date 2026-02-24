@@ -11,6 +11,8 @@ import re
 import zipfile
 import io
 import json
+import tempfile
+from allure_combine import combine_allure
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -947,46 +949,46 @@ def download_error_report(story_id: str, suite: str = "Default"):
 
 @app.get("/api/download-report/{story_id}")
 def download_report(story_id: str, suite: str = "Default"):
-    # Allure generates index.html
+    # Allure generates a directory of files. To provide a single HTML file,
+    # we use allure-combine to merge all assets into one.
     suites_dir = os.path.join(BASE_DIR, "storage", "suites")
     
-    # Try specified suite first
-    report_path = os.path.join(suites_dir, suite, "reports", story_id, "index.html")
-
-    # If not found, try to search across all suites
-    if not os.path.exists(report_path):
-        for s in os.listdir(suites_dir):
-            if os.path.isdir(os.path.join(suites_dir, s)):
-                candidate = os.path.join(suites_dir, s, "reports", story_id, "index.html")
-                if os.path.exists(candidate):
-                    report_path = candidate
-                    suite = s
-                    break
-
-    if os.path.exists(report_path):
-        return FileResponse(
-            report_path,
-            media_type="text/html",
-            filename=f"{story_id}_report.html"
-        )
-    
-    # Fallback to checking the directory
+    # Try to find the report directory
     report_dir = os.path.join(suites_dir, suite, "reports", story_id)
-    if not os.path.exists(report_dir):
-        # Try finding directory across all suites as well
-        found = False
+
+    # If not found in specified suite, search across all suites
+    if not os.path.exists(report_dir) or not os.path.isdir(report_dir):
         for s in os.listdir(suites_dir):
             if os.path.isdir(os.path.join(suites_dir, s)):
-                candidate_dir = os.path.join(suites_dir, s, "reports", story_id)
-                if os.path.exists(candidate_dir):
-                    report_dir = candidate_dir
+                candidate = os.path.join(suites_dir, s, "reports", story_id)
+                if os.path.exists(candidate) and os.path.isdir(candidate):
+                    report_dir = candidate
                     suite = s
-                    found = True
                     break
-        if not found:
-            raise HTTPException(status_code=404, detail="Report not found")
+
+    if not os.path.exists(report_dir) or not os.path.isdir(report_dir):
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    # Generate combined HTML report
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            combine_allure(report_dir, dest_folder=temp_dir)
+            combined_html_path = os.path.join(temp_dir, "complete.html")
+
+            if os.path.exists(combined_html_path):
+                # We need to read it into memory because the temp_dir will be deleted
+                with open(combined_html_path, "rb") as f:
+                    content = f.read()
+
+                return StreamingResponse(
+                    io.BytesIO(content),
+                    media_type="text/html",
+                    headers={"Content-Disposition": f"attachment; filename={story_id}_report.html"}
+                )
+    except Exception as e:
+        print(f"Failed to combine Allure report: {e}")
     
-    # Fallback to ZIP
+    # Fallback to ZIP if combine fails or other issues occur
     memory_file = io.BytesIO()
     with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(report_dir):

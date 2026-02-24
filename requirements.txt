@@ -16,3 +16,4 @@ tailwind-merge
 lucide-react
 framer-motion
 axios
+allure-combine
