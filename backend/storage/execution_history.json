@@ -7,5 +7,23 @@
         "duration": 0,
         "passed": 0,
         "failed": 0
+    },
+    {
+        "timestamp": "2026-02-24T20:26:16.473680",
+        "suite": "Test Suite With Spaces",
+        "story_id": "pass",
+        "success": true,
+        "duration": 0,
+        "passed": 0,
+        "failed": 0
+    },
+    {
+        "timestamp": "2026-02-24T20:28:54.056548",
+        "suite": "Test Suite With Spaces",
+        "story_id": "pass",
+        "success": true,
+        "duration": 0,
+        "passed": 1,
+        "failed": 0
     }
 ]

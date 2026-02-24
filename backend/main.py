@@ -14,7 +14,7 @@ import json
 import tempfile
 from allure_combine import combine_allure
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse
@@ -66,6 +66,51 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 set_broadcast_func(manager.broadcast)
+
+def is_story_match(sid, dname):
+    """Fuzzy match story_id to a directory name"""
+    s1 = sid.lower().replace("_", "").replace(" ", "")
+    s2 = dname.lower().replace("_", "").replace(" ", "")
+    if s1 == s2: return True
+    if s1 in s2 or s2 in s1: return True
+    # Check if words match
+    parts1 = set(sid.lower().split("_"))
+    parts2 = set(dname.lower().split("_"))
+    if parts1.intersection(parts2):
+            # If at least 2 words match or one long word matches
+            common = parts1.intersection(parts2)
+            if len(common) >= 2: return True
+            if len(common) == 1 and list(common)[0] not in ["login", "test", "script", "viking"]: # avoid too broad matches
+                return True
+    return False
+
+def find_report_dir(suites_dir, suite, story_id):
+    """Fuzzy match story_id to a report directory"""
+
+    # 1. Try exact match in specified suite
+    report_dir = os.path.join(suites_dir, suite, "reports", story_id)
+    if os.path.exists(report_dir) and os.path.isdir(report_dir):
+        return report_dir, suite
+
+    # 2. Try fuzzy match in specified suite
+    suite_reports_dir = os.path.join(suites_dir, suite, "reports")
+    if os.path.exists(suite_reports_dir):
+        for d in os.listdir(suite_reports_dir):
+            if is_story_match(story_id, d):
+                return os.path.join(suite_reports_dir, d), suite
+
+    # 3. Search across all suites
+    for s in os.listdir(suites_dir):
+        if not os.path.isdir(os.path.join(suites_dir, s)): continue
+
+        # Fuzzy match in this suite
+        suite_reports_dir = os.path.join(suites_dir, s, "reports")
+        if os.path.exists(suite_reports_dir):
+            for d in os.listdir(suite_reports_dir):
+                if is_story_match(story_id, d):
+                    return os.path.join(suite_reports_dir, d), s
+
+    return None, None
 
 def run_generation_task_sync(job_id, story_id, story_text, bdd_content=None, suite="Default"):
     """Sync version that handles async internally"""
@@ -521,7 +566,11 @@ def run_test(req: RunTestRequest):
     allure_results_dir = os.path.join(suite_dir, "allure-results", story_id)
     os.makedirs(allure_results_dir, exist_ok=True)
     
-    json_report_path = os.path.join(report_dir, "report.json")
+    # Save JSON report in a separate directory to avoid it being deleted by Allure's --clean
+    json_reports_dir = os.path.abspath(os.path.join(suite_dir, "json-reports"))
+    os.makedirs(json_reports_dir, exist_ok=True)
+    json_report_path = os.path.join(json_reports_dir, f"{story_id}.json")
+
     abs_script_path = os.path.abspath(script_path)
     
     config = config_manager.get_config()
@@ -780,6 +829,13 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
 
             # Load metadata for accuracy and steps
             meta_path = os.path.join(metadata_dir, f"{sid}.json")
+            # Fuzzy match metadata if exact match fails
+            if not os.path.exists(meta_path) and os.path.exists(metadata_dir):
+                for mfile in os.listdir(metadata_dir):
+                    if is_story_match(sid, mfile.replace(".json", "")):
+                        meta_path = os.path.join(metadata_dir, mfile)
+                        break
+
             story_accuracy = 0
             if os.path.exists(meta_path):
                 try:
@@ -793,13 +849,26 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
                 except: pass
 
             # Look for report.json (case-insensitive directory search)
-            json_report = os.path.join(reports_dir, sid, "report.json")
-            if not os.path.exists(json_report):
-                # Try finding the directory case-insensitively
-                if os.path.exists(reports_dir):
-                    dirs = [d for d in os.listdir(reports_dir) if d.lower() == sid.lower()]
-                    if dirs:
-                        json_report = os.path.join(reports_dir, dirs[0], "report.json")
+            # Look for report.json in the new safe location first
+            json_report_path = os.path.join(s_path, "json-reports", f"{sid}.json")
+            matched_report_dir = sid
+
+            # Fallback to legacy location or fuzzy match if not found
+            if not os.path.exists(json_report_path):
+                # Try finding it in reports dir (legacy)
+                legacy_path = os.path.join(reports_dir, sid, "report.json")
+                if os.path.exists(legacy_path):
+                    json_report_path = legacy_path
+                else:
+                    # Fuzzy match the directory in reports/
+                    if os.path.exists(reports_dir):
+                        for d in os.listdir(reports_dir):
+                            if is_story_match(sid, d):
+                                candidate = os.path.join(reports_dir, d, "report.json")
+                                if os.path.exists(candidate):
+                                    json_report_path = candidate
+                                    matched_report_dir = d
+                                    break
 
             story_passed = 0
             story_failed = 0
@@ -807,8 +876,8 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
             scenarios = []
             failure_reasons = []
 
-            if os.path.exists(json_report):
-                with open(json_report, "r", encoding="utf-8") as rf:
+            if os.path.exists(json_report_path):
+                with open(json_report_path, "r", encoding="utf-8") as rf:
                     try:
                         data = json.load(rf)
                         summary = data.get("summary", {})
@@ -850,7 +919,7 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
                                 "status": "passed" if status == "passed" else "failed",
                                 "duration": round(call.get("duration", 0), 2),
                                 "error": msg,
-                                "report_url": f"/suites/{s}/reports/{sid}/index.html"
+                                "report_url": f"/suites/{s}/reports/{matched_report_dir}/index.html"
                             })
                     except Exception as e:
                         print(f"Error parsing report for {sid}: {e}")
@@ -948,43 +1017,42 @@ def download_error_report(story_id: str, suite: str = "Default"):
     return FileResponse(report_path, filename=f"{story_id}_failure.pdf", media_type="application/pdf")
 
 @app.get("/api/download-report/{story_id}")
-def download_report(story_id: str, suite: str = "Default"):
+def download_report(story_id: str, background_tasks: BackgroundTasks, suite: str = "Default"):
     # Allure generates a directory of files. To provide a single HTML file,
     # we use allure-combine to merge all assets into one.
     suites_dir = os.path.join(BASE_DIR, "storage", "suites")
     
-    # Try to find the report directory
-    report_dir = os.path.join(suites_dir, suite, "reports", story_id)
+    report_dir, found_suite = find_report_dir(suites_dir, suite, story_id)
 
-    # If not found in specified suite, search across all suites
-    if not os.path.exists(report_dir) or not os.path.isdir(report_dir):
-        for s in os.listdir(suites_dir):
-            if os.path.isdir(os.path.join(suites_dir, s)):
-                candidate = os.path.join(suites_dir, s, "reports", story_id)
-                if os.path.exists(candidate) and os.path.isdir(candidate):
-                    report_dir = candidate
-                    suite = s
-                    break
-
-    if not os.path.exists(report_dir) or not os.path.isdir(report_dir):
+    if not report_dir:
         raise HTTPException(status_code=404, detail="Report not found")
 
     # Generate combined HTML report
     try:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            combine_allure(report_dir, dest_folder=temp_dir)
-            combined_html_path = os.path.join(temp_dir, "complete.html")
+        # Create a permanent-ish temp file that we'll delete after serving
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
+        temp_file_path = temp_file.name
+        temp_file.close()
 
-            if os.path.exists(combined_html_path):
-                # We need to read it into memory because the temp_dir will be deleted
-                with open(combined_html_path, "rb") as f:
-                    content = f.read()
+        # allure-combine creates 'complete.html' inside the dest_folder
+        # We need to pass a directory as dest_folder
+        temp_dir = tempfile.mkdtemp()
+        combine_allure(report_dir, dest_folder=temp_dir)
+        combined_html_path = os.path.join(temp_dir, "complete.html")
 
-                return StreamingResponse(
-                    io.BytesIO(content),
-                    media_type="text/html",
-                    headers={"Content-Disposition": f"attachment; filename={story_id}_report.html"}
-                )
+        if os.path.exists(combined_html_path):
+            shutil.move(combined_html_path, temp_file_path)
+            shutil.rmtree(temp_dir)
+
+            background_tasks.add_task(os.remove, temp_file_path)
+
+            return FileResponse(
+                temp_file_path,
+                media_type="text/html",
+                filename=f"{story_id}_report.html"
+            )
+        else:
+            shutil.rmtree(temp_dir)
     except Exception as e:
         print(f"Failed to combine Allure report: {e}")
     
