@@ -1,0 +1,12 @@
+node_modules/
+__pycache__/
+*.pyc
+.env
+dist/
+build/
+*.log
+backend/storage/suites/*/allure-results/
+backend/storage/suites/*/reports/
+backend/storage/suites/*/trace_logs/
+backend/storage/suites/*/screenshots/
+backend/storage/suites/*/error_reports/

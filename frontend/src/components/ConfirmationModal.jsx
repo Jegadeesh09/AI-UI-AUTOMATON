@@ -15,8 +15,8 @@ const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel, confir
         </button>
         
         <div className="text-center space-y-3 mt-2">
-          <h2 className="text-2xl font-bold text-zinc-900">{title || "Are you sure?"}</h2>
-          <p className="text-zinc-500 text-sm leading-relaxed">
+          <h2 className="text-2xl font-bold text-black break-words">{title || "Are you sure?"}</h2>
+          <p className="text-black text-sm leading-relaxed break-words">
             {message || "Are you sure you want to delete this item? This action cannot be undone."}
           </p>
         </div>
@@ -30,7 +30,7 @@ const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel, confir
           </button>
           <button 
             onClick={onConfirm} 
-            className="flex-1 px-4 py-3 bg-white text-black border border-zinc-200 font-bold rounded-xl hover:bg-zinc-100 transition-all shadow-lg"
+            className="flex-1 px-4 py-3 bg-black text-white border border-black font-bold rounded-xl hover:bg-zinc-800 transition-all shadow-lg"
           >
             {confirmText}
           </button>

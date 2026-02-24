@@ -72,8 +72,8 @@ html,
 body {
   scrollbar-width: none;     /* Firefox */
   -ms-overflow-style: none;  /* Edge / IE */
-  overflow: auto;
-  min-height: 100%;
+  overflow: hidden;
+  height: 100%;
 }
 
 .no-scrollbar::-webkit-scrollbar {

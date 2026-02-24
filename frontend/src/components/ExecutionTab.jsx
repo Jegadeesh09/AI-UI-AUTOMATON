@@ -276,7 +276,7 @@ const ExecutionTab = ({ settings, onRefreshSettings }) => {
                           title={(!script.has_report && !results[script.story_id]) ? "No report available yet" : "Show Allure Report"}
                         >
                           <ExternalLink size={16} />
-                          Extend Report
+                          Allure Report
                         </button>
                         <button 
                           onClick={() => runTest(script.story_id, suiteGroup.suite)}

@@ -522,19 +522,15 @@ def run_test(req: RunTestRequest):
 
         # Generate static Allure report
         try:
-            allure_bin = "/tmp/allure-2.32.0/bin/allure"
-            if not os.path.exists(allure_bin):
-                allure_bin = "allure" # fallback to path
-            
-            # Generate to index.html in report_dir
+            # Use npx allure to avoid hardcoded paths
             gen_command = [
-                allure_bin, "generate",
+                "npx", "allure", "generate",
                 allure_results_dir,
                 "-o", report_dir,
                 "--clean"
             ]
             print(f"📊 Generating Allure report: {' '.join(gen_command)}")
-            subprocess.run(gen_command, capture_output=True, check=True)
+            subprocess.run(gen_command, capture_output=True, check=True, shell=False)
             
             # Since allure generate creates many files, and we want to serve it,
             # we should check if index.html is there.
@@ -768,7 +764,7 @@ app.mount("/suites", StaticFiles(directory=SUITES_DIR), name="suites")
 
 # Screenshots might still be global or suite-specific.
 # Let's keep a global one for now or move to suite if needed.
-# For Extend Report, they should probably be suite-specific.
+# For Allure Report, they should probably be suite-specific.
 
 if __name__ == "__main__":
     import uvicorn

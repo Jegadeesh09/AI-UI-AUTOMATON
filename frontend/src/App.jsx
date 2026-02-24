@@ -160,7 +160,7 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white p-8 flex flex-col overflow-y-auto no-scrollbar">
+    <div className="h-screen bg-black text-white p-8 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="w-full flex justify-between items-center mb-12 px-4">
         <div className="flex items-center gap-3">
@@ -193,7 +193,7 @@ function App() {
       </div>
 
       {/* Main Content */}
-      <div className="w-full px-4">
+      <div className="w-full px-4 flex-1 flex flex-col overflow-hidden">
         {/* Tabs Navigation */}
         <div className="flex justify-between items-center border-b border-zinc-900 mb-8">
           <div className="flex gap-8">
@@ -231,7 +231,7 @@ function App() {
         </div>
 
         {/* Tab Panels */}
-        <div className="flex-1">
+        <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
           {renderTabContent()}
         </div>
       </div>
