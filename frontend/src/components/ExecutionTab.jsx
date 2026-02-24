@@ -186,8 +186,9 @@ const ExecutionTab = ({ settings, onRefreshSettings }) => {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-      <div className="lg:col-span-12 space-y-6">
+    <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 h-full">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="lg:col-span-12 space-y-6 pb-8">
       <ConfirmationModal 
         isOpen={confirmModal.isOpen}
         title={confirmModal.title}
@@ -310,6 +311,7 @@ const ExecutionTab = ({ settings, onRefreshSettings }) => {
         onSave={saveScript}
         storyId={editorModal.storyId}
       />
+        </div>
       </div>
     </div>
   );

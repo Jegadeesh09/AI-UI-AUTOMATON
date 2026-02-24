@@ -489,7 +489,7 @@ const UploadTab = ({
   };
 
   return (
-    <>
+    <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 h-full">
       <ConfirmationModal 
         isOpen={confirmModal.isOpen}
         title={confirmModal.title}
@@ -516,7 +516,7 @@ const UploadTab = ({
         errorData={errorModal.data}
         onClose={() => setErrorModal({ ...errorModal, isOpen: false })}
       />
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 pb-8">
         <div className="lg:col-span-8 space-y-6">
         <div className="surface p-6 rounded-lg transition-all duration-300 relative">
           <div className="flex justify-between items-center mb-6">
@@ -792,7 +792,7 @@ const UploadTab = ({
         </div>
       </div>
     </div>
-    </>
+    </div>
   );
 };
 

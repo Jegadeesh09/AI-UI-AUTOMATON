@@ -59,8 +59,9 @@ const DashboardTab = () => {
   const allStories = stats.suites.flatMap(s => s.stories);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-      <div className="lg:col-span-12 space-y-8 animate-in fade-in duration-500">
+    <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 h-full">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="lg:col-span-12 space-y-8 animate-in fade-in duration-500 pb-8">
       <ReportModal 
         isOpen={reportModal.isOpen} 
         onClose={() => setReportModal({ ...reportModal, isOpen: false })} 
@@ -230,6 +231,7 @@ const DashboardTab = () => {
           )}
         </div>
       </div>
+        </div>
       </div>
     </div>
   );

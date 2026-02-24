@@ -231,7 +231,7 @@ function App() {
         </div>
 
         {/* Tab Panels */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+        <div className="flex-1 flex flex-col overflow-hidden">
           {renderTabContent()}
         </div>
       </div>

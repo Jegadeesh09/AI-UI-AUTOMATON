@@ -205,7 +205,8 @@ def get_scripts():
         scripts = []
         for f in files:
             story_id = f.replace("test_", "").replace(".py", "")
-            report_path = os.path.join(suite_path, "reports", story_id, "extent-report.html")
+            # Allure generates index.html
+            report_path = os.path.join(suite_path, "reports", story_id, "index.html")
             scripts.append({
                 "story_id": story_id,
                 "filename": f,
@@ -797,7 +798,8 @@ def download_error_report(story_id: str, suite: str = "Default"):
 
 @app.get("/api/download-report/{story_id}")
 def download_report(story_id: str, suite: str = "Default"):
-    report_path = os.path.join(BASE_DIR, "storage", "suites", suite, "reports", story_id, "extent-report.html")
+    # Allure generates index.html
+    report_path = os.path.join(BASE_DIR, "storage", "suites", suite, "reports", story_id, "index.html")
     
     if os.path.exists(report_path):
         return FileResponse(
