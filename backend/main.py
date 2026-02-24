@@ -530,7 +530,8 @@ def run_test(req: RunTestRequest):
                 "--clean"
             ]
             print(f"📊 Generating Allure report: {' '.join(gen_command)}")
-            subprocess.run(gen_command, capture_output=True, check=True, shell=False)
+            # shell=True is required on Windows to find npx.cmd
+            subprocess.run(gen_command, capture_output=True, check=True, shell=os.name == 'nt')
             
             # Since allure generate creates many files, and we want to serve it,
             # we should check if index.html is there.
