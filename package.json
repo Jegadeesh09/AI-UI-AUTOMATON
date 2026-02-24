@@ -20,5 +20,8 @@
   "bugs": {
     "url": "https://github.com/Jegadeesh09/AI-UI-AUTOMATON/issues"
   },
-  "homepage": "https://github.com/Jegadeesh09/AI-UI-AUTOMATON#readme"
+  "homepage": "https://github.com/Jegadeesh09/AI-UI-AUTOMATON#readme",
+  "dependencies": {
+    "@playwright/test": "^1.58.2"
+  }
 }

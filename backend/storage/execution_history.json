@@ -1,0 +1,11 @@
+[
+    {
+        "timestamp": "2026-02-24T16:22:19.029978",
+        "suite": "Default",
+        "story_id": "dummy",
+        "success": true,
+        "duration": 0,
+        "passed": 0,
+        "failed": 0
+    }
+]

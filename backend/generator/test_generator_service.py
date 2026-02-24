@@ -164,6 +164,31 @@ class TestGeneratorService:
         script_path = f"backend/storage/suites/{suite}/scripts/test_{story_id}.py"
         save_to_file(generated_code, script_path)
         
+        # Save generation metadata for dashboard
+        try:
+            from datetime import datetime
+            metadata_dir = f"backend/storage/suites/{suite}/metadata"
+            os.makedirs(metadata_dir, exist_ok=True)
+
+            # Filter trace_data to only include actual actions (exclude markers)
+            action_steps = [t for t in trace_data if t.get("action") not in ["SCENARIO_MARKER", "METADATA"]]
+            mapped_steps = [t for t in action_steps if t.get("status") in ["SUCCESS", "HEALED"]]
+
+            accuracy = (len(mapped_steps) / len(action_steps) * 100) if action_steps else 0
+
+            metadata = {
+                "story_id": story_id,
+                "timestamp": datetime.now().isoformat(),
+                "total_steps": len(action_steps),
+                "mapped_steps": len(mapped_steps),
+                "accuracy": round(accuracy, 2),
+                "is_automated": True
+            }
+            with open(os.path.join(metadata_dir, f"{story_id}.json"), "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=4)
+        except Exception as e:
+            print(f"⚠️ Failed to save generation metadata: {e}")
+
         return {
             "story_id": story_id,
             "bdd": bdd_content[:500] + "..." if len(bdd_content) > 500 else bdd_content,

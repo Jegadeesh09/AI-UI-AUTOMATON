@@ -461,12 +461,43 @@ async def get_job_status(job_id: str):
     return job
 
 # @app.post("/api/run-test/{story_id}")
+def record_execution_result(suite, story_id, success, duration, passed_count, failed_count):
+    history_file = os.path.join(BASE_DIR, "storage", "execution_history.json")
+    os.makedirs(os.path.dirname(history_file), exist_ok=True)
+
+    from datetime import datetime
+
+    history = []
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        except:
+            history = []
+
+    history.append({
+        "timestamp": datetime.now().isoformat(),
+        "suite": suite,
+        "story_id": story_id,
+        "success": success,
+        "duration": duration,
+        "passed": passed_count,
+        "failed": failed_count
+    })
+
+    # Keep last 1000 executions
+    if len(history) > 1000:
+        history = history[-1000:]
+
+    with open(history_file, "w", encoding="utf-8") as f:
+        json.dump(history, f, indent=4)
+
 @app.post("/api/run-test")
 def run_test(req: RunTestRequest):
     story_id = req.story_id
     suite = req.suite or "Default"
     """Synchronous test execution to avoid async issues"""
-    suite_dir = os.path.join(BASE_DIR, "storage", "suites", suite)
+    suite_dir = os.path.abspath(os.path.join(BASE_DIR, "storage", "suites", suite))
     script_path = os.path.join(
         suite_dir,
         "scripts",
@@ -608,6 +639,22 @@ def run_test(req: RunTestRequest):
             print(error_msg)
             log_to_ui(error_msg, type="error")
         
+        # Parse report for history recording
+        story_passed = 0
+        story_failed = 0
+        duration = 0
+        if os.path.exists(json_report_path):
+            with open(json_report_path, "r", encoding="utf-8") as rf:
+                try:
+                    data = json.load(rf)
+                    summary = data.get("summary", {})
+                    story_passed = summary.get("passed", 0)
+                    story_failed = summary.get("failed", 0) + summary.get("error", 0)
+                    duration = summary.get("duration", 0)
+                except: pass
+
+        record_execution_result(suite, story_id, return_code == 0, duration, story_passed, story_failed)
+
         return {
             "success": return_code == 0,
             "exit_code": return_code,
@@ -688,12 +735,23 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
     total_stories = 0
     total_passed = 0
     total_failed = 0
+    total_scenarios = 0
+    total_steps = 0
+    total_accuracy = 0
+    accuracy_count = 0
+
+    manual_stories = 0
+    automated_stories = 0
+
     suite_stats = []
+    all_story_details = []
 
     for s in target_suites:
         s_path = os.path.join(suites_dir, s)
         reports_dir = os.path.join(s_path, "reports")
         stories_dir = os.path.join(s_path, "stories")
+        metadata_dir = os.path.join(s_path, "metadata")
+        scripts_dir = os.path.join(s_path, "scripts")
         
         if not os.path.exists(stories_dir):
             continue
@@ -710,12 +768,42 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
                 continue
             
             total_stories += 1
-            json_report = os.path.join(reports_dir, sid, "report.json")
             
+            # Check automation status
+            script_exists = os.path.exists(os.path.join(scripts_dir, f"test_{sid}.py"))
+            if script_exists:
+                automated_stories += 1
+            else:
+                manual_stories += 1
+
+            # Load metadata for accuracy and steps
+            meta_path = os.path.join(metadata_dir, f"{sid}.json")
+            story_accuracy = 0
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as mf:
+                        mdata = json.load(mf)
+                        t_steps = mdata.get("total_steps", 0)
+                        total_steps += t_steps
+                        story_accuracy = mdata.get("accuracy", 0)
+                        total_accuracy += story_accuracy
+                        accuracy_count += 1
+                except: pass
+
+            # Look for report.json (case-insensitive directory search)
+            json_report = os.path.join(reports_dir, sid, "report.json")
+            if not os.path.exists(json_report):
+                # Try finding the directory case-insensitively
+                if os.path.exists(reports_dir):
+                    dirs = [d for d in os.listdir(reports_dir) if d.lower() == sid.lower()]
+                    if dirs:
+                        json_report = os.path.join(reports_dir, dirs[0], "report.json")
+
             story_passed = 0
             story_failed = 0
             duration = 0
             scenarios = []
+            failure_reasons = []
 
             if os.path.exists(json_report):
                 with open(json_report, "r", encoding="utf-8") as rf:
@@ -730,25 +818,54 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
                         s_failed += story_failed
                         total_passed += story_passed
                         total_failed += story_failed
+                        total_scenarios += (story_passed + story_failed)
 
                         for test in data.get("tests", []):
                             name = test.get("nodeid", "").split("::")[-1]
-                            status = test.get("outcome", "unknown")
+                            status = test.get("outcome", "passed")
+
+                            call = test.get("call", {})
+                            excinfo = call.get("excinfo", {})
+                            msg = excinfo.get("message", "")
+
+                            reason = "Unknown"
+                            category = "Real Bug"
+                            if status != "passed":
+                                if "Timeout" in msg or "timed out" in msg.lower():
+                                    reason = "Element Timeout"
+                                    category = "Environment Issue"
+                                elif "no such element" in msg.lower() or "Selector" in msg:
+                                    reason = "Brittle XPath"
+                                    category = "Script Issue"
+                                elif "assertion" in msg.lower():
+                                    reason = "Assertion Failure"
+                                    category = "Real Bug"
+
+                                failure_reasons.append({"reason": reason, "category": category, "message": msg[:200]})
+
                             scenarios.append({
                                 "name": name.replace("test_", "").replace("_", " "),
                                 "status": "passed" if status == "passed" else "failed",
+                                "duration": round(call.get("duration", 0), 2),
+                                "error": msg,
                                 "report_url": f"/suites/{s}/reports/{sid}/index.html"
                             })
                     except Exception as e:
                         print(f"Error parsing report for {sid}: {e}")
             
-            s_story_details.append({
+            story_info = {
                 "story_id": sid,
+                "suite": s,
                 "passed": story_passed,
                 "failed": story_failed,
                 "duration": round(duration, 2),
-                "scenarios": scenarios
-            })
+                "accuracy": story_accuracy,
+                "is_automated": script_exists,
+                "scenarios": scenarios,
+                "failures": failure_reasons
+            }
+            s_story_details.append(story_info)
+            all_story_details.append(story_info)
         
         suite_stats.append({
             "suite": s,
@@ -758,11 +875,43 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
             "stories": s_story_details
         })
 
+    # Load history for trends
+    history_file = os.path.join(BASE_DIR, "storage", "execution_history.json")
+    history_data = []
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, "r", encoding="utf-8") as f:
+                history_data = json.load(f)
+        except: pass
+
+    # AI Insights
+    failure_categories = {}
+    for story in all_story_details:
+        for fail in story.get("failures", []):
+            cat = fail["category"]
+            failure_categories[cat] = failure_categories.get(cat, 0) + 1
+
+    recommendations = []
+    if failure_categories.get("Script Issue", 0) > 2:
+        recommendations.append("High number of script issues detected. Consider re-harvesting XPaths for brittle elements.")
+    if failure_categories.get("Environment Issue", 0) > 2:
+        recommendations.append("Frequent timeouts observed. Check application latency or increase wait times.")
+
     return {
         "total_stories": total_stories,
+        "manual_stories": manual_stories,
+        "automated_stories": automated_stories,
+        "total_scenarios": total_scenarios,
+        "total_steps": total_steps,
         "passed": total_passed,
         "failed": total_failed,
-        "suites": suite_stats
+        "avg_accuracy": round(total_accuracy / accuracy_count, 2) if accuracy_count > 0 else 0,
+        "suites": suite_stats,
+        "history": history_data,
+        "ai_insights": {
+            "failure_summary": failure_categories,
+            "recommendations": recommendations
+        }
     }
 
 @app.get("/api/settings")
