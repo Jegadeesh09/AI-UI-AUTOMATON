@@ -290,6 +290,9 @@ def delete_script(story_id: str, scope: str = "full", suite: str = "Default"):
     if os.path.exists(report_dir):
         shutil.rmtree(report_dir)
         deleted_any = True
+
+    # Update history
+    update_history_on_delete(suite, story_id)
         
     if not deleted_any:
         raise HTTPException(status_code=404, detail="Files not found")
@@ -311,6 +314,8 @@ def delete_suite(suite_name: str):
 
     try:
         shutil.rmtree(suite_dir)
+        # Update history
+        update_history_on_delete(suite_name)
         return {"status": "success", "message": f"Suite {suite_name} and all associated data deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -341,6 +346,10 @@ def rename_story(payload: StoryRename):
             os.makedirs(os.path.dirname(new_path), exist_ok=True)
             os.rename(old_path, new_path)
             renamed_something = True
+
+    if renamed_something:
+        # Update history
+        update_history_on_rename(payload.suite, payload.suite, old_id, new_id)
             
     if not renamed_something:
         raise HTTPException(status_code=404, detail="Original files not found")
@@ -537,6 +546,47 @@ def record_execution_result(suite, story_id, success, duration, passed_count, fa
 
     with open(history_file, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=4)
+
+def update_history_on_rename(old_suite, new_suite, old_story, new_story):
+    history_file = os.path.join(BASE_DIR, "storage", "execution_history.json")
+    if not os.path.exists(history_file): return
+    try:
+        with open(history_file, "r", encoding="utf-8") as f:
+            history = json.load(f)
+
+        changed = False
+        for h in history:
+            # Check for exact match or fuzzy match for story_id
+            h_suite = h.get("suite")
+            h_story = h.get("story_id")
+            if h_suite == old_suite and (h_story == old_story or is_story_match(old_story, h_story)):
+                h["suite"] = new_suite
+                h["story_id"] = new_story
+                changed = True
+
+        if changed:
+            with open(history_file, "w", encoding="utf-8") as f:
+                json.dump(history, f, indent=4)
+    except Exception as e:
+        print(f"Error updating history on rename: {e}")
+
+def update_history_on_delete(suite, story=None):
+    history_file = os.path.join(BASE_DIR, "storage", "execution_history.json")
+    if not os.path.exists(history_file): return
+    try:
+        with open(history_file, "r", encoding="utf-8") as f:
+            history = json.load(f)
+
+        if story:
+            new_history = [h for h in history if not (h.get("suite") == suite and (h.get("story_id") == story or is_story_match(story, h.get("story_id"))))]
+        else:
+            new_history = [h for h in history if h.get("suite") != suite]
+
+        if len(new_history) != len(history):
+            with open(history_file, "w", encoding="utf-8") as f:
+                json.dump(new_history, f, indent=4)
+    except Exception as e:
+        print(f"Error updating history on delete: {e}")
 
 @app.post("/api/run-test")
 def run_test(req: RunTestRequest):
@@ -769,6 +819,15 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
     
     target_suites = [suite] if suite != "All" else [d for d in os.listdir(suites_dir) if os.path.isdir(os.path.join(suites_dir, d))]
     
+    # Load history once for fallbacks and trends
+    history_file = os.path.join(BASE_DIR, "storage", "execution_history.json")
+    history_data = []
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, "r", encoding="utf-8") as f:
+                history_data = json.load(f)
+        except: pass
+
     total_stories = 0
     total_passed = 0
     total_failed = 0
@@ -806,24 +865,32 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
             
             total_stories += 1
             
-            # Check automation status
-            script_exists = os.path.exists(os.path.join(scripts_dir, f"test_{sid}.py"))
+            # Check automation status (case-insensitive)
+            script_exists = False
+            if os.path.exists(scripts_dir):
+                script_files = os.listdir(scripts_dir)
+                for sf in script_files:
+                    if sf.lower() == f"test_{sid}.py".lower():
+                        script_exists = True
+                        break
+
             if script_exists:
                 automated_stories += 1
             else:
                 manual_stories += 1
 
-            # Load metadata for accuracy and steps
-            meta_path = os.path.join(metadata_dir, f"{sid}.json")
-            # Fuzzy match metadata if exact match fails
-            if not os.path.exists(meta_path) and os.path.exists(metadata_dir):
-                for mfile in os.listdir(metadata_dir):
-                    if is_story_match(sid, mfile.replace(".json", "")):
-                        meta_path = os.path.join(metadata_dir, mfile)
+            # Load metadata for accuracy and steps (case-insensitive)
+            meta_path = None
+            if os.path.exists(metadata_dir):
+                metadata_files = os.listdir(metadata_dir)
+                for mf in metadata_files:
+                    m_id = mf.replace(".json", "")
+                    if m_id.lower() == sid.lower() or is_story_match(sid, m_id):
+                        meta_path = os.path.join(metadata_dir, mf)
                         break
 
             story_accuracy = 0
-            if os.path.exists(meta_path):
+            if meta_path and os.path.exists(meta_path):
                 try:
                     with open(meta_path, "r", encoding="utf-8") as mf:
                         mdata = json.load(mf)
@@ -836,20 +903,27 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
 
             # Look for report.json (case-insensitive directory search)
             # Look for report.json in the new safe location first
-            json_report_path = os.path.join(s_path, "json-reports", f"{sid}.json")
+            json_report_path = None
+            json_reports_dir = os.path.join(s_path, "json-reports")
+            if os.path.exists(json_reports_dir):
+                for jr in os.listdir(json_reports_dir):
+                    if jr.lower() == f"{sid}.json".lower():
+                        json_report_path = os.path.join(json_reports_dir, jr)
+                        break
+
             matched_report_dir = sid
 
             # Fallback to legacy location or fuzzy match if not found
-            if not os.path.exists(json_report_path):
+            if not json_report_path:
                 # Try finding it in reports dir (legacy)
                 legacy_path = os.path.join(reports_dir, sid, "report.json")
                 if os.path.exists(legacy_path):
                     json_report_path = legacy_path
                 else:
-                    # Fuzzy match the directory in reports/
+                    # Fuzzy/Case-insensitive match the directory in reports/
                     if os.path.exists(reports_dir):
                         for d in os.listdir(reports_dir):
-                            if is_story_match(sid, d):
+                            if d.lower() == sid.lower() or is_story_match(sid, d):
                                 candidate = os.path.join(reports_dir, d, "report.json")
                                 if os.path.exists(candidate):
                                     json_report_path = candidate
@@ -862,7 +936,23 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
             scenarios = []
             failure_reasons = []
 
-            if os.path.exists(json_report_path):
+            # If no report file found, try finding latest result in history as fallback for KPIs
+            if not json_report_path:
+                latest_history = None
+                for h in reversed(history_data):
+                    h_suite = h.get("suite", "")
+                    h_story = h.get("story_id", "")
+                    if h_suite == s and (h_story.lower() == sid.lower() or is_story_match(sid, h_story)):
+                        latest_history = h
+                        break
+
+                if latest_history:
+                    story_passed = latest_history.get("passed", 0)
+                    story_failed = latest_history.get("failed", 0)
+                    duration = latest_history.get("duration", 0)
+
+            # Use data from json report if it exists (more accurate than history)
+            if json_report_path and os.path.exists(json_report_path):
                 with open(json_report_path, "r", encoding="utf-8") as rf:
                     try:
                         data = json.load(rf)
@@ -870,13 +960,19 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
                         story_passed = summary.get("passed", 0)
                         story_failed = summary.get("failed", 0) + summary.get("error", 0)
                         duration = summary.get("duration", 0)
-                        
-                        s_passed += story_passed
-                        s_failed += story_failed
-                        total_passed += story_passed
-                        total_failed += story_failed
-                        total_scenarios += (story_passed + story_failed)
+                    except: pass
 
+            # Always increment suite/global counters if we have data
+            s_passed += story_passed
+            s_failed += story_failed
+            total_passed += story_passed
+            total_failed += story_failed
+            total_scenarios += (story_passed + story_failed)
+
+            if json_report_path and os.path.exists(json_report_path):
+                with open(json_report_path, "r", encoding="utf-8") as rf:
+                    try:
+                        data = json.load(rf)
                         for test in data.get("tests", []):
                             name = test.get("nodeid", "").split("::")[-1]
                             status = test.get("outcome", "passed")
@@ -910,6 +1006,16 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
                     except Exception as e:
                         print(f"Error parsing report for {sid}: {e}")
             
+            # Fallback for scenarios from history if no report file
+            if not scenarios and (story_passed + story_failed) > 0:
+                scenarios.append({
+                    "name": sid.replace("_", " "),
+                    "status": "passed" if story_passed > 0 else "failed",
+                    "duration": round(duration, 2),
+                    "error": "",
+                    "report_url": f"/suites/{s}/reports/{matched_report_dir}/index.html"
+                })
+
             story_info = {
                 "story_id": sid,
                 "suite": s,
@@ -931,15 +1037,6 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
             "failed": s_failed,
             "stories": s_story_details
         })
-
-    # Load history for trends
-    history_file = os.path.join(BASE_DIR, "storage", "execution_history.json")
-    history_data = []
-    if os.path.exists(history_file):
-        try:
-            with open(history_file, "r", encoding="utf-8") as f:
-                history_data = json.load(f)
-        except: pass
 
     # AI Insights
     failure_categories = {}

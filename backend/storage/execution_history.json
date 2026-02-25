@@ -25,5 +25,23 @@
         "duration": 0,
         "passed": 1,
         "failed": 0
+    },
+    {
+        "timestamp": "2026-02-25T06:04:17.016158",
+        "suite": "Default",
+        "story_id": "viking_curve_login",
+        "success": false,
+        "duration": 0,
+        "passed": 0,
+        "failed": 0
+    },
+    {
+        "timestamp": "2026-02-25T06:06:24.716641",
+        "suite": "Viking Pump Curve",
+        "story_id": "Viking_Curve_Login",
+        "success": false,
+        "duration": 0,
+        "passed": 0,
+        "failed": 1
     }
 ]
