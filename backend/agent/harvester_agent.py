@@ -130,34 +130,52 @@ class HarvesterAgent:
         
         config = config_manager.get_config()
         headless = config.get("HEADLESS_AGENT", True)
+        inc_mode = config.get("INC_MODE", False)
 
         # Get Chrome paths from config
         chrome_exe = config.get("CHROME_EXECUTABLE_PATH", "")
         chrome_user_data = config.get("CHROME_USER_DATA_DIR", "")
 
         async with async_playwright() as p:
-            # Setup User Data Dir and Executable
-            user_data_dir = chrome_user_data if chrome_user_data and os.path.exists(chrome_user_data) else os.path.join(os.getcwd(), "backend/storage/user_data")
-            os.makedirs(user_data_dir, exist_ok=True)
+            # Setup Executable
             executable_path = chrome_exe if chrome_exe and os.path.exists(chrome_exe) else None
-            
-            print(f"   Using Profile: {user_data_dir}")
-            
             launch_args = ["--disable-blink-features=AutomationControlled"]
-            temp_dir_obj = None
             
-            try:
-                launch_msg = f"   Attempting to launch browser (Headless: {headless}, Channel: chrome)..."
-                print(launch_msg)
-                log_to_ui(launch_msg)
+            if inc_mode:
+                # Incognito mode: Use launch() + new_context() instead of launch_persistent_context()
+                print(f"   🚀 Harvester launching in Incognito Mode (Non-persistent)")
+                log_to_ui("🚀 Harvester launching in Incognito Mode...")
+                try:
+                    browser = await p.chromium.launch(
+                        headless=headless,
+                        executable_path=executable_path,
+                        channel="chrome" if not executable_path else None,
+                        args=launch_args
+                    )
+                except Exception as e:
+                    print(f"   ⚠️ Incognito launch failed: {e}. Falling back to bundled Chromium.")
+                    browser = await p.chromium.launch(headless=headless, args=launch_args)
+                context = await browser.new_context()
+            else:
+                # Setup User Data Dir for persistent mode
+                user_data_dir = chrome_user_data if chrome_user_data and os.path.exists(chrome_user_data) else os.path.join(os.getcwd(), "backend/storage/user_data")
+                os.makedirs(user_data_dir, exist_ok=True)
 
-                context = await p.chromium.launch_persistent_context(
-                    user_data_dir,
-                    headless=headless,
-                    executable_path=executable_path,
-                    channel="chrome" if not executable_path else None,
-                    args=launch_args
-                )
+                print(f"   Using Profile: {user_data_dir}")
+                temp_dir_obj = None
+
+                try:
+                    launch_msg = f"   Attempting to launch browser (Headless: {headless}, Channel: chrome)..."
+                    print(launch_msg)
+                    log_to_ui(launch_msg)
+
+                    context = await p.chromium.launch_persistent_context(
+                        user_data_dir,
+                        headless=headless,
+                        executable_path=executable_path,
+                        channel="chrome" if not executable_path else None,
+                        args=launch_args
+                    )
             except Exception as e:
                 error_msg = f"   ⚠️ Initial launch failed: {e}. Trying fallback strategies..."
                 print(error_msg)

@@ -171,6 +171,7 @@ class Settings(BaseModel):
     IS_PAID_LLM: bool
     HEADLESS_AGENT: Optional[bool] = True
     HEADLESS_SCRIPT: Optional[bool] = True
+    INC_MODE: Optional[bool] = False
     SHOW_CODE_ICON: Optional[bool] = True
     CUSTOM_MODELS: List[str] = []
 
@@ -624,6 +625,7 @@ def run_test(req: RunTestRequest):
     
     config = config_manager.get_config()
     headless = config.get("HEADLESS_SCRIPT", True)
+    inc_mode = config.get("INC_MODE", False)
     
     try:
         # Check for required pytest plugins
@@ -667,10 +669,12 @@ def run_test(req: RunTestRequest):
         if not headless:
             pytest_command.append("--headed")
         
-        print(f"🏃 Running test: {' '.join(pytest_command)}")
+        print(f"🏃 Running test (Incognito: {inc_mode}): {' '.join(pytest_command)}")
         env = os.environ.copy()
         env["CURRENT_SUITE"] = suite
-        
+        if inc_mode:
+            env["INC_MODE"] = "true"
+
         log_to_ui(f"🏃 Starting test execution for {story_id}...")
 
         # We use subprocess.Popen to stream logs to the UI

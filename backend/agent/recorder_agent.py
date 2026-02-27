@@ -236,11 +236,12 @@ class RecorderAgent:
         self.status = "recording"
         self.stop_event.clear()
         config = config_manager.get_config()
+        inc_mode = config.get("INC_MODE", False)
         self.p = await async_playwright().start()
         chrome_exe = config.get("CHROME_EXECUTABLE_PATH", "")
         launch_args = ["--disable-blink-features=AutomationControlled"]
         
-        print(f"🚀 RecorderAgent: Launching browser (Chrome Path: {chrome_exe or 'System Default'})")
+        print(f"🚀 RecorderAgent: Launching browser (Incognito: {inc_mode}, Chrome Path: {chrome_exe or 'System Default'})")
         try:
             self.browser = await self.p.chromium.launch(
                 executable_path=chrome_exe if chrome_exe else None,
@@ -254,7 +255,14 @@ class RecorderAgent:
                 headless=False,
                 args=launch_args
             )
-        self.context = await self.browser.new_context()
+
+        if inc_mode:
+            # For Incognito, we use a fresh context with no persistence
+            self.context = await self.browser.new_context()
+        else:
+            # Normally we might want persistence, but RecorderAgent seems to use new_context anyway.
+            # However, if inc_mode is false, we keep the existing behavior.
+            self.context = await self.browser.new_context()
         await self.context.expose_function("emitRecorderAction", self._on_action)
         await self.context.add_init_script(RECORD_SCRIPT_JS)
         

@@ -2,6 +2,20 @@ import pytest
 import os
 from datetime import datetime
 
+@pytest.fixture(scope="session")
+def browser_context_args(browser_context_args):
+    """Override browser_context_args to support incognito mode if requested via environment variable."""
+    inc_mode = os.environ.get("INC_MODE", "false").lower() == "true"
+    if inc_mode:
+        # Playwright's default for browser_context_args is already essentially incognito
+        # (non-persistent) unless we specifically point to a user_data_dir.
+        # But here we can ensure no proxy/persistence is used if we want to be strict.
+        return {
+            **browser_context_args,
+            "viewport": { "width": 1280, "height": 720 },
+        }
+    return browser_context_args
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     pytest_html = item.config.pluginmanager.getplugin('html')
