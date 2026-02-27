@@ -143,13 +143,14 @@ class HarvesterAgent:
             
             if inc_mode:
                 # Incognito mode: Use launch() + new_context() instead of launch_persistent_context()
+                if "--incognito" not in launch_args:
+                    launch_args.append("--incognito")
                 launch_args.extend([
-                    "--incognito",
                     "--no-first-run",
                     "--no-default-browser-check",
                     "--no-sandbox"
                 ])
-                print(f"   🚀 Harvester launching in Incognito Mode (Non-persistent)")
+                print(f"   🚀 Harvester launching in Incognito Mode with args: {launch_args}")
                 log_to_ui("🚀 Harvester launching in Incognito Mode...")
                 try:
                     browser = await p.chromium.launch(
@@ -160,6 +161,7 @@ class HarvesterAgent:
                     )
                 except Exception as e:
                     print(f"   ⚠️ Incognito launch failed: {e}. Falling back to bundled Chromium.")
+                    if "--incognito" not in launch_args: launch_args.append("--incognito")
                     browser = await p.chromium.launch(headless=headless, args=launch_args)
                 context = await browser.new_context()
             else:

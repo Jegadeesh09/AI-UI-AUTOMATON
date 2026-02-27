@@ -8,6 +8,7 @@
     "IS_PAID_LLM": true,
     "HEADLESS_AGENT": false,
     "HEADLESS_SCRIPT": false,
+    "INC_MODE": true,
     "SHOW_CODE_ICON": true,
     "CUSTOM_MODELS": [
         "gemini-2.5-flash",

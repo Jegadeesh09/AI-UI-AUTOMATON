@@ -224,6 +224,10 @@ class RecorderAgent:
         self.actions.append(action)
 
     async def start_session(self):
+        config = config_manager.get_config()
+        inc_mode = config.get("INC_MODE", False)
+        print(f"DEBUG: RecorderAgent.start_session called. INC_MODE in config: {inc_mode}")
+
         # Cleanup any existing session first
         if self.p or self.browser or self.context:
             print("🔄 RecorderAgent: Cleaning up existing session before starting new one...")
@@ -236,8 +240,6 @@ class RecorderAgent:
         self.actions = []
         self.status = "recording"
         self.stop_event.clear()
-        config = config_manager.get_config()
-        inc_mode = config.get("INC_MODE", False)
         self.p = await async_playwright().start()
 
         chrome_exe = config.get("CHROME_EXECUTABLE_PATH", "")
@@ -249,12 +251,16 @@ class RecorderAgent:
         try:
             if inc_mode:
                 # 🛠️ TRULY INCOGNITO: Launch regular browser with --incognito and use a fresh context
+                # Force --incognito in launch args
+                if "--incognito" not in launch_args:
+                    launch_args.append("--incognito")
+
                 launch_args.extend([
-                    "--incognito",
                     "--no-first-run",
                     "--no-default-browser-check",
                     "--no-sandbox"
                 ])
+                print(f"   🚀 Launching with args: {launch_args}")
                 self.browser = await self.p.chromium.launch(
                     executable_path=chrome_exe if chrome_exe else None,
                     channel="chrome" if not chrome_exe else None,
@@ -262,7 +268,7 @@ class RecorderAgent:
                     args=launch_args
                 )
                 self.context = await self.browser.new_context()
-                print("   ✅ Browser launched in Incognito mode.")
+                print(f"   ✅ Browser launched in Incognito mode. Context is incognito: {self.context}")
             else:
                 # 🛠️ NORMAL MODE: Use persistent context to maintain state/profile
                 user_data_dir = chrome_user_data if chrome_user_data and os.path.exists(chrome_user_data) else os.path.join(os.getcwd(), "backend/storage/user_data")
@@ -282,7 +288,8 @@ class RecorderAgent:
         except Exception as e:
             print(f"⚠️ RecorderAgent: Failed to launch browser with primary strategy ({e}). Falling back to fresh bundled Chromium.")
             # Absolute fallback
-            self.browser = await self.p.chromium.launch(headless=False)
+            fallback_args = ["--incognito"] if inc_mode else []
+            self.browser = await self.p.chromium.launch(headless=False, args=fallback_args)
             self.context = await self.browser.new_context()
         await self.context.expose_function("emitRecorderAction", self._on_action)
         await self.context.add_init_script(RECORD_SCRIPT_JS)

@@ -32,13 +32,16 @@ class ConfigManager:
 
     def get_config(self):
         try:
+            if not CONFIG_FILE.exists():
+                self._ensure_config_exists()
             with open(CONFIG_FILE, "r") as f:
                 config = json.load(f)
                 # Ensure new keys are present even if they weren't in the saved file
                 if "INC_MODE" not in config:
                     config["INC_MODE"] = False
                 return config
-        except Exception:
+        except Exception as e:
+            print(f"Error loading config: {e}")
             return {}
 
     def save_config(self, config_data):
