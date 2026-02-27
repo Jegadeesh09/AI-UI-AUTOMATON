@@ -140,11 +140,15 @@ class HarvesterAgent:
             # Setup Executable
             executable_path = chrome_exe if chrome_exe and os.path.exists(chrome_exe) else None
             launch_args = ["--disable-blink-features=AutomationControlled"]
-            if inc_mode:
-                launch_args.append("--incognito")
             
             if inc_mode:
                 # Incognito mode: Use launch() + new_context() instead of launch_persistent_context()
+                launch_args.extend([
+                    "--incognito",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--no-sandbox"
+                ])
                 print(f"   🚀 Harvester launching in Incognito Mode (Non-persistent)")
                 log_to_ui("🚀 Harvester launching in Incognito Mode...")
                 try:

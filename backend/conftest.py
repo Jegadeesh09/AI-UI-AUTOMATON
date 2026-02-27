@@ -9,7 +9,12 @@ def browser_type_launch_args(browser_type_launch_args):
     if inc_mode:
         return {
             **browser_type_launch_args,
-            "args": browser_type_launch_args.get("args", []) + ["--incognito"],
+            "args": browser_type_launch_args.get("args", []) + [
+                "--incognito",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--no-sandbox"
+            ],
         }
     return browser_type_launch_args
 
