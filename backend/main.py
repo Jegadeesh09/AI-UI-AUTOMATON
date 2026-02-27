@@ -12,6 +12,7 @@ import zipfile
 import io
 import json
 import tempfile
+import difflib
 from allure_combine import combine_allure
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect, Response
@@ -68,10 +69,17 @@ set_broadcast_func(manager.broadcast)
 
 def is_story_match(sid, dname):
     """Fuzzy match story_id to a directory name"""
+    if not sid or not dname: return False
     s1 = sid.lower().replace("_", "").replace(" ", "")
     s2 = dname.lower().replace("_", "").replace(" ", "")
     if s1 == s2: return True
     if s1 in s2 or s2 in s1: return True
+
+    # Handle minor typos (e.g. Aviator vs Avaitor)
+    if len(s1) > 3 and len(s2) > 3:
+        if difflib.SequenceMatcher(None, s1, s2).ratio() > 0.8:
+            return True
+
     # Check if words match
     parts1 = set(sid.lower().split("_"))
     parts2 = set(dname.lower().split("_"))

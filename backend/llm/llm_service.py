@@ -282,9 +282,14 @@ class LLMService:
         ALLURE REPORTING:
         - The test will be run with `allure-pytest`.
         - Use `allure.step("Step description")` for EVERY step.
-        - For EVERY step, take a screenshot and attach it to Allure:
+        - For EVERY step, take a screenshot and attach it to Allure.
+        - CRITICAL: Ensure the screenshot filename does not contain special characters like ':', '/', '?', or '*'.
+        - Use this EXACT pattern for screenshots:
           ```python
-          screenshot_path = f"backend/storage/suites/{suite}/screenshots/{story_id}/step_{{i}}.png"
+          import re
+          # inside the test step
+          safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', step_description)[:50]
+          screenshot_path = f"backend/storage/suites/{suite}/screenshots/{story_id}/step_{{i}}_{{safe_name}}.png"
           os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
           page.screenshot(path=screenshot_path)
           allure.attach.file(screenshot_path, name=f"Step {{i}}", attachment_type=allure.attachment_type.PNG)

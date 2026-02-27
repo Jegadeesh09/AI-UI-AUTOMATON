@@ -75,11 +75,12 @@ SIMPLIFY_DOM_JS = """
                            node.onclick || node.getAttribute('role') === 'button' ||
                            node.classList.contains('btn') || style.cursor === 'pointer';
         
-        if (isClickable || (node.innerText.length < 100 && node.innerText.trim().length > 0)) {
+        const text = (node.innerText || node.textContent || '').trim();
+        if (isClickable || (text.length > 0 && text.length < 100)) {
             interactiveElements.push({
                 tagName: node.tagName,
                 id: node.id,
-                text: node.innerText.trim().substring(0, 100),
+                text: text.substring(0, 100),
                 type: node.type,
                 name: node.getAttribute('name'),
                 title: node.getAttribute('title'),
