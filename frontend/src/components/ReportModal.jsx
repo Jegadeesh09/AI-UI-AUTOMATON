@@ -1,11 +1,12 @@
 import React from 'react';
 import { X, Download } from 'lucide-react';
 
-const ReportModal = ({ isOpen, onClose, reportUrl, storyId }) => {
+const ReportModal = ({ isOpen, onClose, reportUrl, storyId, suite }) => {
   if (!isOpen) return null;
 
   const handleDownload = () => {
-    window.location.href = `http://localhost:8000/api/download-report/${storyId}`;
+    const suiteParam = suite ? `?suite=${encodeURIComponent(suite)}` : '';
+    window.location.href = `http://localhost:8000/api/download-report/${storyId}${suiteParam}`;
   };
 
   return (

@@ -24,6 +24,7 @@ class ConfigManager:
                 "DEFAULT_URL": "https://www.google.com",
                 "HEADLESS_AGENT": True,
                 "HEADLESS_SCRIPT": True,
+                "INC_MODE": False,
                 "CHROME_EXECUTABLE_PATH": None,
                 "CHROME_USER_DATA_DIR": None,
                 "SHOW_CODE_ICON": True
@@ -32,7 +33,11 @@ class ConfigManager:
     def get_config(self):
         try:
             with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
+                config = json.load(f)
+                # Ensure new keys are present even if they weren't in the saved file
+                if "INC_MODE" not in config:
+                    config["INC_MODE"] = False
+                return config
         except Exception:
             return {}
 

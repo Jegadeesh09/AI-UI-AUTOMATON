@@ -1,0 +1,27 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "devDependencies": {
+    "allure-commandline": "^2.36.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jegadeesh09/AI-UI-AUTOMATON.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Jegadeesh09/AI-UI-AUTOMATON/issues"
+  },
+  "homepage": "https://github.com/Jegadeesh09/AI-UI-AUTOMATON#readme",
+  "dependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}

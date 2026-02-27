@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+pydantic
+python-multipart
+pandas
+openpyxl
+pytest
+pytest-playwright
+allure-pytest
+pytest-json-report
+google-generativeai
+openai
+playwright
+allure-combine

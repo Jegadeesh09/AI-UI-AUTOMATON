@@ -139,7 +139,11 @@ class TestGeneratorService:
         log_to_ui("🕵️ Step 2: Hitting Harvester agent - Analyzing UI elements...")
         log_to_ui("🔍 Step 3: Collecting XPath of scenario & scenario name...")
         trace_log = self._run_async_harvest(story_id, nav_steps, recorded_trace=recorded_trace, suite=suite)
-        trace_data = json.loads(trace_log) if trace_log else []
+        try:
+            trace_data = json.loads(trace_log) if trace_log else []
+        except Exception as e:
+            print(f"⚠️ Failed to parse trace log: {e}")
+            trace_data = []
         
         # Check for failure in trace. We don't raise exception anymore, just log to UI and continue if possible.
         # However, we still want to inform the user.
@@ -153,17 +157,47 @@ class TestGeneratorService:
 
         healed_steps = [t for t in trace_data if t.get("status") == "HEALED"]
         
+        # Save generation metadata for dashboard EARLY
+        try:
+            from datetime import datetime
+            metadata_dir = f"backend/storage/suites/{suite}/metadata"
+            os.makedirs(metadata_dir, exist_ok=True)
+
+            # Filter trace_data to only include actual actions (exclude markers)
+            action_steps = [t for t in trace_data if isinstance(t, dict) and t.get("action") not in ["SCENARIO_MARKER", "METADATA"]]
+            mapped_steps = [t for t in action_steps if t.get("status") in ["SUCCESS", "HEALED"]]
+
+            accuracy = (len(mapped_steps) / len(action_steps) * 100) if action_steps else 0
+
+            metadata = {
+                "story_id": story_id,
+                "timestamp": datetime.now().isoformat(),
+                "total_steps": len(action_steps),
+                "mapped_steps": len(mapped_steps),
+                "accuracy": round(accuracy, 2),
+                "is_automated": True
+            }
+            with open(os.path.join(metadata_dir, f"{story_id}.json"), "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=4)
+            print(f"✅ Saved metadata for {story_id} in {suite}")
+        except Exception as e:
+            print(f"⚠️ Failed to save generation metadata for {story_id}: {e}")
+
         update_phase("Script generation started")
         generated_code = llm_service.generate_code_from_bdd_and_map(
             story_id, bdd_content, trace_log, data_context=data_context, suite=suite
         )
-        
+
         total_tokens = llm_service.get_total_tokens()
         log_to_ui(f"✅ LLM Completed - Total Tokens Used: {total_tokens}")
-        
+
         script_path = f"backend/storage/suites/{suite}/scripts/test_{story_id}.py"
-        save_to_file(generated_code, script_path)
-        
+        if generated_code:
+            save_to_file(generated_code, script_path)
+        else:
+            print(f"⚠️ LLM returned empty code for {story_id}")
+            log_to_ui(f"⚠️ Warning: LLM returned empty code for {story_id}", type="warning")
+
         return {
             "story_id": story_id,
             "bdd": bdd_content[:500] + "..." if len(bdd_content) > 500 else bdd_content,

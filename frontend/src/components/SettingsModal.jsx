@@ -15,6 +15,7 @@ const SettingsModal = ({ isOpen, onClose }) => {
     IS_PAID_LLM: true,
     HEADLESS_AGENT: true,
     HEADLESS_SCRIPT: true,
+    INC_MODE: false,
     SHOW_CODE_ICON: true,
     CUSTOM_MODELS: []
   });
@@ -182,6 +183,22 @@ const SettingsModal = ({ isOpen, onClose }) => {
                 className="text-white"
               >
                 {settings.HEADLESS_AGENT ? <ToggleRight size={32} className="text-green-500" /> : <ToggleLeft size={32} className="text-zinc-600" />}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-zinc-900/50 rounded-lg border border-zinc-800">
+              <div className="flex items-center gap-3">
+                <Monitor className="text-zinc-400" size={20} />
+                <div>
+                  <p className="font-medium text-sm">Browser Mode</p>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-wider">Launch in Incognito mode</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSettings({...settings, INC_MODE: !settings.INC_MODE})}
+                className="text-white"
+              >
+                {settings.INC_MODE ? <ToggleRight size={32} className="text-green-500" /> : <ToggleLeft size={32} className="text-zinc-600" />}
               </button>
             </div>
 

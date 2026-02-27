@@ -11,8 +11,10 @@ import re
 import zipfile
 import io
 import json
+import tempfile
+from allure_combine import combine_allure
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse
@@ -21,7 +23,6 @@ from typing import List, Optional
 from backend.config.config_manager import config_manager
 from backend.utils.file_util import read_file, get_file_structure
 from backend.utils.logger import set_broadcast_func, log_to_ui
-from backend.utils.report_gen import generate_extent_report
 from backend.agent.recorder_agent import recorder_agent
 
 # Use ThreadPoolExecutor for sync operations
@@ -64,6 +65,51 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 set_broadcast_func(manager.broadcast)
+
+def is_story_match(sid, dname):
+    """Fuzzy match story_id to a directory name"""
+    s1 = sid.lower().replace("_", "").replace(" ", "")
+    s2 = dname.lower().replace("_", "").replace(" ", "")
+    if s1 == s2: return True
+    if s1 in s2 or s2 in s1: return True
+    # Check if words match
+    parts1 = set(sid.lower().split("_"))
+    parts2 = set(dname.lower().split("_"))
+    if parts1.intersection(parts2):
+            # If at least 2 words match or one long word matches
+            common = parts1.intersection(parts2)
+            if len(common) >= 2: return True
+            if len(common) == 1 and list(common)[0] not in ["login", "test", "script", "viking"]: # avoid too broad matches
+                return True
+    return False
+
+def find_report_dir(suites_dir, suite, story_id):
+    """Fuzzy match story_id to a report directory"""
+
+    # 1. Try exact match in specified suite
+    report_dir = os.path.join(suites_dir, suite, "reports", story_id)
+    if os.path.exists(report_dir) and os.path.isdir(report_dir):
+        return report_dir, suite
+
+    # 2. Try fuzzy match in specified suite
+    suite_reports_dir = os.path.join(suites_dir, suite, "reports")
+    if os.path.exists(suite_reports_dir):
+        for d in os.listdir(suite_reports_dir):
+            if is_story_match(story_id, d):
+                return os.path.join(suite_reports_dir, d), suite
+
+    # 3. Search across all suites
+    for s in os.listdir(suites_dir):
+        if not os.path.isdir(os.path.join(suites_dir, s)): continue
+
+        # Fuzzy match in this suite
+        suite_reports_dir = os.path.join(suites_dir, s, "reports")
+        if os.path.exists(suite_reports_dir):
+            for d in os.listdir(suite_reports_dir):
+                if is_story_match(story_id, d):
+                    return os.path.join(suite_reports_dir, d), s
+
+    return None, None
 
 def run_generation_task_sync(job_id, story_id, story_text, bdd_content=None, suite="Default"):
     """Sync version that handles async internally"""
@@ -125,6 +171,7 @@ class Settings(BaseModel):
     IS_PAID_LLM: bool
     HEADLESS_AGENT: Optional[bool] = True
     HEADLESS_SCRIPT: Optional[bool] = True
+    INC_MODE: Optional[bool] = False
     SHOW_CODE_ICON: Optional[bool] = True
     CUSTOM_MODELS: List[str] = []
 
@@ -205,7 +252,8 @@ def get_scripts():
         scripts = []
         for f in files:
             story_id = f.replace("test_", "").replace(".py", "")
-            report_path = os.path.join(suite_path, "reports", story_id, "extent-report.html")
+            # Allure generates index.html
+            report_path = os.path.join(suite_path, "reports", story_id, "index.html")
             scripts.append({
                 "story_id": story_id,
                 "filename": f,
@@ -243,6 +291,9 @@ def delete_script(story_id: str, scope: str = "full", suite: str = "Default"):
     if os.path.exists(report_dir):
         shutil.rmtree(report_dir)
         deleted_any = True
+
+    # Update history
+    update_history_on_delete(suite, story_id)
         
     if not deleted_any:
         raise HTTPException(status_code=404, detail="Files not found")
@@ -264,6 +315,8 @@ def delete_suite(suite_name: str):
 
     try:
         shutil.rmtree(suite_dir)
+        # Update history
+        update_history_on_delete(suite_name)
         return {"status": "success", "message": f"Suite {suite_name} and all associated data deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -294,6 +347,10 @@ def rename_story(payload: StoryRename):
             os.makedirs(os.path.dirname(new_path), exist_ok=True)
             os.rename(old_path, new_path)
             renamed_something = True
+
+    if renamed_something:
+        # Update history
+        update_history_on_rename(payload.suite, payload.suite, old_id, new_id)
             
     if not renamed_something:
         raise HTTPException(status_code=404, detail="Original files not found")
@@ -460,12 +517,84 @@ async def get_job_status(job_id: str):
     return job
 
 # @app.post("/api/run-test/{story_id}")
+def record_execution_result(suite, story_id, success, duration, passed_count, failed_count):
+    history_file = os.path.join(BASE_DIR, "storage", "execution_history.json")
+    os.makedirs(os.path.dirname(history_file), exist_ok=True)
+
+    from datetime import datetime
+
+    history = []
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        except:
+            history = []
+
+    history.append({
+        "timestamp": datetime.now().isoformat(),
+        "suite": suite,
+        "story_id": story_id,
+        "success": success,
+        "duration": duration,
+        "passed": passed_count,
+        "failed": failed_count
+    })
+
+    # Keep last 1000 executions
+    if len(history) > 1000:
+        history = history[-1000:]
+
+    with open(history_file, "w", encoding="utf-8") as f:
+        json.dump(history, f, indent=4)
+
+def update_history_on_rename(old_suite, new_suite, old_story, new_story):
+    history_file = os.path.join(BASE_DIR, "storage", "execution_history.json")
+    if not os.path.exists(history_file): return
+    try:
+        with open(history_file, "r", encoding="utf-8") as f:
+            history = json.load(f)
+
+        changed = False
+        for h in history:
+            # Check for exact match or fuzzy match for story_id
+            h_suite = h.get("suite")
+            h_story = h.get("story_id")
+            if h_suite == old_suite and (h_story == old_story or is_story_match(old_story, h_story)):
+                h["suite"] = new_suite
+                h["story_id"] = new_story
+                changed = True
+
+        if changed:
+            with open(history_file, "w", encoding="utf-8") as f:
+                json.dump(history, f, indent=4)
+    except Exception as e:
+        print(f"Error updating history on rename: {e}")
+
+def update_history_on_delete(suite, story=None):
+    history_file = os.path.join(BASE_DIR, "storage", "execution_history.json")
+    if not os.path.exists(history_file): return
+    try:
+        with open(history_file, "r", encoding="utf-8") as f:
+            history = json.load(f)
+
+        if story:
+            new_history = [h for h in history if not (h.get("suite") == suite and (h.get("story_id") == story or is_story_match(story, h.get("story_id"))))]
+        else:
+            new_history = [h for h in history if h.get("suite") != suite]
+
+        if len(new_history) != len(history):
+            with open(history_file, "w", encoding="utf-8") as f:
+                json.dump(new_history, f, indent=4)
+    except Exception as e:
+        print(f"Error updating history on delete: {e}")
+
 @app.post("/api/run-test")
 def run_test(req: RunTestRequest):
     story_id = req.story_id
     suite = req.suite or "Default"
     """Synchronous test execution to avoid async issues"""
-    suite_dir = os.path.join(BASE_DIR, "storage", "suites", suite)
+    suite_dir = os.path.abspath(os.path.join(BASE_DIR, "storage", "suites", suite))
     script_path = os.path.join(
         suite_dir,
         "scripts",
@@ -487,65 +616,141 @@ def run_test(req: RunTestRequest):
     allure_results_dir = os.path.join(suite_dir, "allure-results", story_id)
     os.makedirs(allure_results_dir, exist_ok=True)
     
-    json_report_path = os.path.join(report_dir, "report.json")
+    # Save JSON report in a separate directory to avoid it being deleted by Allure's --clean
+    json_reports_dir = os.path.abspath(os.path.join(suite_dir, "json-reports"))
+    os.makedirs(json_reports_dir, exist_ok=True)
+    json_report_path = os.path.join(json_reports_dir, f"{story_id}.json")
+
     abs_script_path = os.path.abspath(script_path)
     
     config = config_manager.get_config()
     headless = config.get("HEADLESS_SCRIPT", True)
+    inc_mode = config.get("INC_MODE", False)
     
     try:
+        # Check for required pytest plugins
+        import importlib.metadata
+        plugins = {
+            "pytest-json-report": "--json-report",
+            "allure-pytest": "--alluredir"
+        }
+        missing_plugins = []
+        installed_packages = {pkg.metadata['Name'].lower(): pkg.version for pkg in importlib.metadata.distributions()}
+
+        for pkg_name in plugins:
+            if pkg_name not in installed_packages:
+                missing_plugins.append(pkg_name)
+
+        if missing_plugins:
+            msg = f"❌ Missing required pytest plugins: {', '.join(missing_plugins)}. Please run: pip install {' '.join(missing_plugins)}"
+            print(msg)
+            log_to_ui(msg, type="error")
+            # We continue but some features might fail
+
         # Run pytest using sys.executable to ensure the same environment
         pytest_command = [
             sys.executable, "-m", "pytest",
             abs_script_path,
-            f"--alluredir={allure_results_dir}",
-            "--clean-alluredir",
-            f"--json-report",
-            f"--json-report-file={json_report_path}",
             "--verbose"
         ]
         
+        if "allure-pytest" in installed_packages:
+            pytest_command.extend([
+                f"--alluredir={allure_results_dir}",
+                "--clean-alluredir"
+            ])
+
+        if "pytest-json-report" in installed_packages:
+            pytest_command.extend([
+                f"--json-report",
+                f"--json-report-file={json_report_path}"
+            ])
+
         if not headless:
             pytest_command.append("--headed")
         
-        print(f"🏃 Running test: {' '.join(pytest_command)}")
+        print(f"🏃 Running test (Incognito: {inc_mode}): {' '.join(pytest_command)}")
         env = os.environ.copy()
         env["CURRENT_SUITE"] = suite
-        
-        result = subprocess.run(
+        if inc_mode:
+            env["INC_MODE"] = "true"
+
+        log_to_ui(f"🏃 Starting test execution for {story_id}...")
+
+        # We use subprocess.Popen to stream logs to the UI
+        process = subprocess.Popen(
             pytest_command,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=300,
-            env=env
+            env=env,
+            bufsize=1,
+            universal_newlines=True
         )
+
+        full_stdout = []
+        for line in iter(process.stdout.readline, ""):
+            line_str = line.strip()
+            if line_str:
+                print(f"pytest: {line_str}")
+                log_to_ui(line_str)
+                full_stdout.append(line_str)
+
+        process.stdout.close()
+        return_code = process.wait(timeout=300)
+        stdout_text = "\n".join(full_stdout)
 
         # Generate static Allure report
         try:
-            allure_bin = "/tmp/allure-2.32.0/bin/allure"
-            if not os.path.exists(allure_bin):
-                allure_bin = "allure" # fallback to path
-            
-            # Generate to index.html in report_dir
+            # Use npx allure-commandline to avoid hardcoded paths
+            # Use forward slashes for paths to avoid syntax errors on Windows
+            results_dir_alt = allure_results_dir.replace("\\", "/")
+            report_dir_alt = report_dir.replace("\\", "/")
+
+            # --yes is used to skip the installation prompt if allure-commandline is not yet installed
+            # We use "allure" command as provided by allure-commandline package
             gen_command = [
-                allure_bin, "generate",
-                allure_results_dir,
-                "-o", report_dir,
+                "npx", "--yes", "allure-commandline", "generate",
+                f'"{results_dir_alt}"',
+                "-o", f'"{report_dir_alt}"',
                 "--clean"
             ]
-            print(f"📊 Generating Allure report: {' '.join(gen_command)}")
-            subprocess.run(gen_command, capture_output=True, check=True)
-            
-            # Since allure generate creates many files, and we want to serve it,
-            # we should check if index.html is there.
+
+            full_cmd = " ".join(gen_command)
+            print(f"📊 Generating Allure report: {full_cmd}")
+            log_to_ui("📊 Generating Allure report...")
+
+            # Use shell=True to ensure npx is found in the environment
+            subprocess.run(full_cmd, check=True, shell=True, timeout=90)
+
+            log_to_ui("✅ Allure report generated successfully.")
+
         except Exception as e:
-            print(f"Failed to generate Allure report: {e}")
+            error_msg = f"Failed to generate Allure report: {e}"
+            print(error_msg)
+            log_to_ui(error_msg, type="error")
         
+        # Parse report for history recording
+        story_passed = 0
+        story_failed = 0
+        duration = 0
+        if os.path.exists(json_report_path):
+            with open(json_report_path, "r", encoding="utf-8") as rf:
+                try:
+                    data = json.load(rf)
+                    summary = data.get("summary", {})
+                    story_passed = summary.get("passed", 0)
+                    story_failed = summary.get("failed", 0) + summary.get("error", 0)
+                    duration = summary.get("duration", 0)
+                except: pass
+
+        record_execution_result(suite, story_id, return_code == 0, duration, story_passed, story_failed)
+
         return {
-            "success": result.returncode == 0,
-            "exit_code": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
+            "success": return_code == 0,
+            "exit_code": return_code,
+            "stdout": stdout_text,
+            "stderr": "",
             "report_url": f"/suites/{suite}/reports/{story_id}/index.html"
         }
     except subprocess.TimeoutExpired:
@@ -618,15 +823,35 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
     
     target_suites = [suite] if suite != "All" else [d for d in os.listdir(suites_dir) if os.path.isdir(os.path.join(suites_dir, d))]
     
+    # Load history once for fallbacks and trends
+    history_file = os.path.join(BASE_DIR, "storage", "execution_history.json")
+    history_data = []
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, "r", encoding="utf-8") as f:
+                history_data = json.load(f)
+        except: pass
+
     total_stories = 0
     total_passed = 0
     total_failed = 0
+    total_scenarios = 0
+    total_steps = 0
+    total_accuracy = 0
+    accuracy_count = 0
+
+    manual_stories = 0
+    automated_stories = 0
+
     suite_stats = []
+    all_story_details = []
 
     for s in target_suites:
         s_path = os.path.join(suites_dir, s)
         reports_dir = os.path.join(s_path, "reports")
         stories_dir = os.path.join(s_path, "stories")
+        metadata_dir = os.path.join(s_path, "metadata")
+        scripts_dir = os.path.join(s_path, "scripts")
         
         if not os.path.exists(stories_dir):
             continue
@@ -643,45 +868,171 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
                 continue
             
             total_stories += 1
-            json_report = os.path.join(reports_dir, sid, "report.json")
             
+            # Check automation status (case-insensitive)
+            script_exists = False
+            if os.path.exists(scripts_dir):
+                script_files = os.listdir(scripts_dir)
+                for sf in script_files:
+                    if sf.lower() == f"test_{sid}.py".lower():
+                        script_exists = True
+                        break
+
+            if script_exists:
+                automated_stories += 1
+            else:
+                manual_stories += 1
+
+            # Load metadata for accuracy and steps (case-insensitive)
+            meta_path = None
+            if os.path.exists(metadata_dir):
+                metadata_files = os.listdir(metadata_dir)
+                for mf in metadata_files:
+                    m_id = mf.replace(".json", "")
+                    if m_id.lower() == sid.lower() or is_story_match(sid, m_id):
+                        meta_path = os.path.join(metadata_dir, mf)
+                        break
+
+            story_accuracy = 0
+            if meta_path and os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as mf:
+                        mdata = json.load(mf)
+                        t_steps = mdata.get("total_steps", 0)
+                        total_steps += t_steps
+                        story_accuracy = mdata.get("accuracy", 0)
+                        total_accuracy += story_accuracy
+                        accuracy_count += 1
+                except: pass
+
+            # Look for report.json (case-insensitive directory search)
+            # Look for report.json in the new safe location first
+            json_report_path = None
+            json_reports_dir = os.path.join(s_path, "json-reports")
+            if os.path.exists(json_reports_dir):
+                for jr in os.listdir(json_reports_dir):
+                    if jr.lower() == f"{sid}.json".lower():
+                        json_report_path = os.path.join(json_reports_dir, jr)
+                        break
+
+            matched_report_dir = sid
+
+            # Fallback to legacy location or fuzzy match if not found
+            if not json_report_path:
+                # Try finding it in reports dir (legacy)
+                legacy_path = os.path.join(reports_dir, sid, "report.json")
+                if os.path.exists(legacy_path):
+                    json_report_path = legacy_path
+                else:
+                    # Fuzzy/Case-insensitive match the directory in reports/
+                    if os.path.exists(reports_dir):
+                        for d in os.listdir(reports_dir):
+                            if d.lower() == sid.lower() or is_story_match(sid, d):
+                                candidate = os.path.join(reports_dir, d, "report.json")
+                                if os.path.exists(candidate):
+                                    json_report_path = candidate
+                                    matched_report_dir = d
+                                    break
+
             story_passed = 0
             story_failed = 0
             duration = 0
             scenarios = []
+            failure_reasons = []
 
-            if os.path.exists(json_report):
-                with open(json_report, "r", encoding="utf-8") as rf:
+            # If no report file found, try finding latest result in history as fallback for KPIs
+            if not json_report_path:
+                latest_history = None
+                for h in reversed(history_data):
+                    h_suite = h.get("suite", "")
+                    h_story = h.get("story_id", "")
+                    if h_suite == s and (h_story.lower() == sid.lower() or is_story_match(sid, h_story)):
+                        latest_history = h
+                        break
+
+                if latest_history:
+                    story_passed = latest_history.get("passed", 0)
+                    story_failed = latest_history.get("failed", 0)
+                    duration = latest_history.get("duration", 0)
+
+            # Use data from json report if it exists (more accurate than history)
+            if json_report_path and os.path.exists(json_report_path):
+                with open(json_report_path, "r", encoding="utf-8") as rf:
                     try:
                         data = json.load(rf)
                         summary = data.get("summary", {})
                         story_passed = summary.get("passed", 0)
                         story_failed = summary.get("failed", 0) + summary.get("error", 0)
                         duration = summary.get("duration", 0)
-                        
-                        s_passed += story_passed
-                        s_failed += story_failed
-                        total_passed += story_passed
-                        total_failed += story_failed
+                    except: pass
 
+            # Always increment suite/global counters if we have data
+            s_passed += story_passed
+            s_failed += story_failed
+            total_passed += story_passed
+            total_failed += story_failed
+            total_scenarios += (story_passed + story_failed)
+
+            if json_report_path and os.path.exists(json_report_path):
+                with open(json_report_path, "r", encoding="utf-8") as rf:
+                    try:
+                        data = json.load(rf)
                         for test in data.get("tests", []):
                             name = test.get("nodeid", "").split("::")[-1]
-                            status = test.get("outcome", "unknown")
+                            status = test.get("outcome", "passed")
+
+                            call = test.get("call", {})
+                            excinfo = call.get("excinfo", {})
+                            msg = excinfo.get("message", "")
+
+                            reason = "Unknown"
+                            category = "Real Bug"
+                            if status != "passed":
+                                if "Timeout" in msg or "timed out" in msg.lower():
+                                    reason = "Element Timeout"
+                                    category = "Environment Issue"
+                                elif "no such element" in msg.lower() or "Selector" in msg:
+                                    reason = "Brittle XPath"
+                                    category = "Script Issue"
+                                elif "assertion" in msg.lower():
+                                    reason = "Assertion Failure"
+                                    category = "Real Bug"
+
+                                failure_reasons.append({"reason": reason, "category": category, "message": msg[:200]})
+
                             scenarios.append({
                                 "name": name.replace("test_", "").replace("_", " "),
                                 "status": "passed" if status == "passed" else "failed",
-                                "report_url": f"/suites/{s}/reports/{sid}/index.html"
+                                "duration": round(call.get("duration", 0), 2),
+                                "error": msg,
+                                "report_url": f"/suites/{s}/reports/{matched_report_dir}/index.html"
                             })
                     except Exception as e:
                         print(f"Error parsing report for {sid}: {e}")
             
-            s_story_details.append({
+            # Fallback for scenarios from history if no report file
+            if not scenarios and (story_passed + story_failed) > 0:
+                scenarios.append({
+                    "name": sid.replace("_", " "),
+                    "status": "passed" if story_passed > 0 else "failed",
+                    "duration": round(duration, 2),
+                    "error": "",
+                    "report_url": f"/suites/{s}/reports/{matched_report_dir}/index.html"
+                })
+
+            story_info = {
                 "story_id": sid,
+                "suite": s,
                 "passed": story_passed,
                 "failed": story_failed,
                 "duration": round(duration, 2),
-                "scenarios": scenarios
-            })
+                "accuracy": story_accuracy,
+                "is_automated": script_exists,
+                "scenarios": scenarios,
+                "failures": failure_reasons
+            }
+            s_story_details.append(story_info)
+            all_story_details.append(story_info)
         
         suite_stats.append({
             "suite": s,
@@ -691,11 +1042,34 @@ def get_dashboard_stats(suite: str = "All", story_id: str = "All"):
             "stories": s_story_details
         })
 
+    # AI Insights
+    failure_categories = {}
+    for story in all_story_details:
+        for fail in story.get("failures", []):
+            cat = fail["category"]
+            failure_categories[cat] = failure_categories.get(cat, 0) + 1
+
+    recommendations = []
+    if failure_categories.get("Script Issue", 0) > 2:
+        recommendations.append("High number of script issues detected. Consider re-harvesting XPaths for brittle elements.")
+    if failure_categories.get("Environment Issue", 0) > 2:
+        recommendations.append("Frequent timeouts observed. Check application latency or increase wait times.")
+
     return {
         "total_stories": total_stories,
+        "manual_stories": manual_stories,
+        "automated_stories": automated_stories,
+        "total_scenarios": total_scenarios,
+        "total_steps": total_steps,
         "passed": total_passed,
         "failed": total_failed,
-        "suites": suite_stats
+        "avg_accuracy": round(total_accuracy / accuracy_count, 2) if accuracy_count > 0 else 0,
+        "suites": suite_stats,
+        "history": history_data,
+        "ai_insights": {
+            "failure_summary": failure_categories,
+            "recommendations": recommendations
+        }
     }
 
 @app.get("/api/settings")
@@ -730,22 +1104,46 @@ def download_error_report(story_id: str, suite: str = "Default"):
     return FileResponse(report_path, filename=f"{story_id}_failure.pdf", media_type="application/pdf")
 
 @app.get("/api/download-report/{story_id}")
-def download_report(story_id: str, suite: str = "Default"):
-    report_path = os.path.join(BASE_DIR, "storage", "suites", suite, "reports", story_id, "extent-report.html")
+def download_report(story_id: str, background_tasks: BackgroundTasks, suite: str = "Default"):
+    # Allure generates a directory of files. To provide a single HTML file,
+    # we use allure-combine to merge all assets into one.
+    suites_dir = os.path.join(BASE_DIR, "storage", "suites")
     
-    if os.path.exists(report_path):
-        return FileResponse(
-            report_path,
-            media_type="text/html",
-            filename=f"{story_id}_report.html"
-        )
-    
-    # Fallback to checking the directory
-    report_dir = os.path.join(BASE_DIR, "storage", "suites", suite, "reports", story_id)
-    if not os.path.exists(report_dir):
+    report_dir, found_suite = find_report_dir(suites_dir, suite, story_id)
+
+    if not report_dir:
         raise HTTPException(status_code=404, detail="Report not found")
+
+    # Generate combined HTML report
+    try:
+        # Create a permanent-ish temp file that we'll delete after serving
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
+        temp_file_path = temp_file.name
+        temp_file.close()
+
+        # allure-combine creates 'complete.html' inside the dest_folder
+        # We need to pass a directory as dest_folder
+        temp_dir = tempfile.mkdtemp()
+        combine_allure(report_dir, dest_folder=temp_dir)
+        combined_html_path = os.path.join(temp_dir, "complete.html")
+
+        if os.path.exists(combined_html_path):
+            shutil.move(combined_html_path, temp_file_path)
+            shutil.rmtree(temp_dir)
+
+            background_tasks.add_task(os.remove, temp_file_path)
+
+            return FileResponse(
+                temp_file_path,
+                media_type="text/html",
+                filename=f"{story_id}_report.html"
+            )
+        else:
+            shutil.rmtree(temp_dir)
+    except Exception as e:
+        print(f"Failed to combine Allure report: {e}")
     
-    # Fallback to ZIP
+    # Fallback to ZIP if combine fails or other issues occur
     memory_file = io.BytesIO()
     with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(report_dir):
@@ -768,7 +1166,7 @@ app.mount("/suites", StaticFiles(directory=SUITES_DIR), name="suites")
 
 # Screenshots might still be global or suite-specific.
 # Let's keep a global one for now or move to suite if needed.
-# For Extend Report, they should probably be suite-specific.
+# For Allure Report, they should probably be suite-specific.
 
 if __name__ == "__main__":
     import uvicorn

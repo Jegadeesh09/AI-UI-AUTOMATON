@@ -130,35 +130,67 @@ class HarvesterAgent:
         
         config = config_manager.get_config()
         headless = config.get("HEADLESS_AGENT", True)
+        inc_mode = config.get("INC_MODE", False)
 
         # Get Chrome paths from config
         chrome_exe = config.get("CHROME_EXECUTABLE_PATH", "")
         chrome_user_data = config.get("CHROME_USER_DATA_DIR", "")
 
         async with async_playwright() as p:
-            # Setup User Data Dir and Executable
-            user_data_dir = chrome_user_data if chrome_user_data and os.path.exists(chrome_user_data) else os.path.join(os.getcwd(), "backend/storage/user_data")
-            os.makedirs(user_data_dir, exist_ok=True)
+            # Setup Executable
             executable_path = chrome_exe if chrome_exe and os.path.exists(chrome_exe) else None
-            
-            print(f"   Using Profile: {user_data_dir}")
-            
             launch_args = ["--disable-blink-features=AutomationControlled"]
-            temp_dir_obj = None
             
-            try:
-                print(f"   Attempting to launch Chrome (Channel: chrome, Exe: {executable_path})...")
-                context = await p.chromium.launch_persistent_context(
-                    user_data_dir,
-                    headless=headless,
-                    executable_path=executable_path,
-                    channel="chrome" if not executable_path else None,
-                    args=launch_args
-                )
+            if inc_mode:
+                # Incognito mode: Use launch() + new_context() instead of launch_persistent_context()
+                launch_args.extend([
+                    "--incognito",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--no-sandbox"
+                ])
+                print(f"   🚀 Harvester launching in Incognito Mode (Non-persistent)")
+                log_to_ui("🚀 Harvester launching in Incognito Mode...")
+                try:
+                    browser = await p.chromium.launch(
+                        headless=headless,
+                        executable_path=executable_path,
+                        channel="chrome" if not executable_path else None,
+                        args=launch_args
+                    )
+                except Exception as e:
+                    print(f"   ⚠️ Incognito launch failed: {e}. Falling back to bundled Chromium.")
+                    browser = await p.chromium.launch(headless=headless, args=launch_args)
+                context = await browser.new_context()
+            else:
+                # Setup User Data Dir for persistent mode
+                user_data_dir = chrome_user_data if chrome_user_data and os.path.exists(chrome_user_data) else os.path.join(os.getcwd(), "backend/storage/user_data")
+                os.makedirs(user_data_dir, exist_ok=True)
+
+                print(f"   Using Profile: {user_data_dir}")
+                temp_dir_obj = None
+
+                try:
+                    launch_msg = f"   Attempting to launch browser (Headless: {headless}, Channel: chrome)..."
+                    print(launch_msg)
+                    log_to_ui(launch_msg)
+
+                    context = await p.chromium.launch_persistent_context(
+                        user_data_dir,
+                        headless=headless,
+                        executable_path=executable_path,
+                        channel="chrome" if not executable_path else None,
+                        args=launch_args
+                    )
             except Exception as e:
-                print(f"   ⚠️ Initial launch failed: {e}")
+                error_msg = f"   ⚠️ Initial launch failed: {e}. Trying fallback strategies..."
+                print(error_msg)
+                log_to_ui(error_msg, type="error")
+
+                # Strategy 2: Clone profile if locked
                 if ("lock" in str(e).lower() or "used by another" in str(e).lower()) and os.path.exists(user_data_dir):
                     print(f"   ⚠️ Profile locked, cloning to temporary directory...")
+                    log_to_ui("⚠️ Profile locked, cloning to temporary directory...")
                     temp_dir_obj = tempfile.TemporaryDirectory(prefix="chrome_profile_")
                     actual_user_data_dir = temp_dir_obj.name
                     try:
@@ -172,11 +204,24 @@ class HarvesterAgent:
                             args=launch_args
                         )
                     except Exception as clone_e:
-                        print(f"   ❌ Clone failed: {clone_e}. Falling back to bundled Chromium.")
-                        context = await p.chromium.launch_persistent_context("", headless=headless)
+                        print(f"      ❌ Clone failed: {clone_e}. Falling back to non-persistent context.")
+                        log_to_ui("❌ Profile clone failed. Using non-persistent context.", type="error")
+                        # Fallback to non-persistent
+                        browser = await p.chromium.launch(headless=headless, channel="chrome" if not executable_path else None, executable_path=executable_path)
+                        context = await browser.new_context()
                 else:
-                    print(f"   ❌ Launch failed. Falling back to bundled Chromium.")
-                    context = await p.chromium.launch_persistent_context("", headless=headless)
+                    # Strategy 3: Non-persistent launch with Chrome channel
+                    try:
+                        print(f"   🔄 Falling back to non-persistent Chrome...")
+                        log_to_ui("🔄 Falling back to non-persistent Chrome launch...")
+                        browser = await p.chromium.launch(headless=headless, channel="chrome" if not executable_path else None, executable_path=executable_path)
+                        context = await browser.new_context()
+                    except Exception as e2:
+                        # Strategy 4: Bundled Chromium
+                        print(f"   ❌ Chrome launch failed: {e2}. Falling back to bundled Chromium.")
+                        log_to_ui("❌ Chrome launch failed. Falling back to bundled Chromium.", type="error")
+                        browser = await p.chromium.launch(headless=headless)
+                        context = await browser.new_context()
 
             page = context.pages[0] if context.pages else await context.new_page()
             

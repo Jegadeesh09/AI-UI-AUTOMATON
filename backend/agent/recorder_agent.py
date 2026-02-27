@@ -225,9 +225,10 @@ class RecorderAgent:
 
     async def start_session(self):
         # Cleanup any existing session first
-        if self.p or self.browser:
+        if self.p or self.browser or self.context:
             print("🔄 RecorderAgent: Cleaning up existing session before starting new one...")
             try:
+                if self.context: await self.context.close()
                 if self.browser: await self.browser.close()
                 if self.p: await self.p.stop()
             except: pass
@@ -236,25 +237,53 @@ class RecorderAgent:
         self.status = "recording"
         self.stop_event.clear()
         config = config_manager.get_config()
+        inc_mode = config.get("INC_MODE", False)
         self.p = await async_playwright().start()
+
         chrome_exe = config.get("CHROME_EXECUTABLE_PATH", "")
+        chrome_user_data = config.get("CHROME_USER_DATA_DIR", "")
         launch_args = ["--disable-blink-features=AutomationControlled"]
         
-        print(f"🚀 RecorderAgent: Launching browser (Chrome Path: {chrome_exe or 'System Default'})")
+        print(f"🚀 RecorderAgent: Starting session (Incognito: {inc_mode}, Chrome Path: {chrome_exe or 'System Default'})")
+
         try:
-            self.browser = await self.p.chromium.launch(
-                executable_path=chrome_exe if chrome_exe else None,
-                channel="chrome" if not chrome_exe else None,
-                headless=False,
-                args=launch_args
-            )
+            if inc_mode:
+                # 🛠️ TRULY INCOGNITO: Launch regular browser with --incognito and use a fresh context
+                launch_args.extend([
+                    "--incognito",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--no-sandbox"
+                ])
+                self.browser = await self.p.chromium.launch(
+                    executable_path=chrome_exe if chrome_exe else None,
+                    channel="chrome" if not chrome_exe else None,
+                    headless=False,
+                    args=launch_args
+                )
+                self.context = await self.browser.new_context()
+                print("   ✅ Browser launched in Incognito mode.")
+            else:
+                # 🛠️ NORMAL MODE: Use persistent context to maintain state/profile
+                user_data_dir = chrome_user_data if chrome_user_data and os.path.exists(chrome_user_data) else os.path.join(os.getcwd(), "backend/storage/user_data")
+                os.makedirs(user_data_dir, exist_ok=True)
+
+                print(f"   Using Profile: {user_data_dir}")
+                self.context = await self.p.chromium.launch_persistent_context(
+                    user_data_dir,
+                    executable_path=chrome_exe if chrome_exe else None,
+                    channel="chrome" if not chrome_exe else None,
+                    headless=False,
+                    args=launch_args
+                )
+                self.browser = None # In persistent mode, the context handles the browser lifecycle
+                print("   ✅ Browser launched in Normal (Persistent) mode.")
+
         except Exception as e:
-            print(f"⚠️ RecorderAgent: Failed to launch system Chrome ({e}). Falling back to bundled Chromium.")
-            self.browser = await self.p.chromium.launch(
-                headless=False,
-                args=launch_args
-            )
-        self.context = await self.browser.new_context()
+            print(f"⚠️ RecorderAgent: Failed to launch browser with primary strategy ({e}). Falling back to fresh bundled Chromium.")
+            # Absolute fallback
+            self.browser = await self.p.chromium.launch(headless=False)
+            self.context = await self.browser.new_context()
         await self.context.expose_function("emitRecorderAction", self._on_action)
         await self.context.add_init_script(RECORD_SCRIPT_JS)
         
@@ -282,6 +311,13 @@ class RecorderAgent:
             print("💾 RecorderAgent: Closing browser and context...")
             await asyncio.sleep(0.5)
             
+            # Close context first
+            if self.context:
+                try:
+                    await self.context.close()
+                except:
+                    pass
+
             # Close browser if it's still open
             if self.browser:
                 try:

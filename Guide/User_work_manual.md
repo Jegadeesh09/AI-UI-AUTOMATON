@@ -58,7 +58,7 @@ The application automatically masks sensitive fields (passwords, secrets) as `<S
 1. Go to the **Execution** tab.
 2. Find your story in the list.
 3. Click **Run Agent**.
-4. Once finished, click **Extend Report** to see screenshots and step-by-step execution for each scenario.
+4. Once finished, click **Allure Report** to see screenshots and step-by-step execution for each scenario.
 
 ### Settings
 
