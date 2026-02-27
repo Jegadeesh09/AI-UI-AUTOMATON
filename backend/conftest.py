@@ -3,6 +3,17 @@ import os
 from datetime import datetime
 
 @pytest.fixture(scope="session")
+def browser_type_launch_args(browser_type_launch_args):
+    """Override browser_type_launch_args to support incognito mode if requested via environment variable."""
+    inc_mode = os.environ.get("INC_MODE", "false").lower() == "true"
+    if inc_mode:
+        return {
+            **browser_type_launch_args,
+            "args": browser_type_launch_args.get("args", []) + ["--incognito"],
+        }
+    return browser_type_launch_args
+
+@pytest.fixture(scope="session")
 def browser_context_args(browser_context_args):
     """Override browser_context_args to support incognito mode if requested via environment variable."""
     inc_mode = os.environ.get("INC_MODE", "false").lower() == "true"

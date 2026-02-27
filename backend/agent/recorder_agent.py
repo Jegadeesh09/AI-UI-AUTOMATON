@@ -240,6 +240,8 @@ class RecorderAgent:
         self.p = await async_playwright().start()
         chrome_exe = config.get("CHROME_EXECUTABLE_PATH", "")
         launch_args = ["--disable-blink-features=AutomationControlled"]
+        if inc_mode:
+            launch_args.append("--incognito")
         
         print(f"🚀 RecorderAgent: Launching browser (Incognito: {inc_mode}, Chrome Path: {chrome_exe or 'System Default'})")
         try:
