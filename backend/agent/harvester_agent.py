@@ -184,46 +184,46 @@ class HarvesterAgent:
                         channel="chrome" if not executable_path else None,
                         args=launch_args
                     )
-            except Exception as e:
-                error_msg = f"   ⚠️ Initial launch failed: {e}. Trying fallback strategies..."
-                print(error_msg)
-                log_to_ui(error_msg, type="error")
+                except Exception as e:
+                    error_msg = f"   ⚠️ Initial launch failed: {e}. Trying fallback strategies..."
+                    print(error_msg)
+                    log_to_ui(error_msg, type="error")
 
-                # Strategy 2: Clone profile if locked
-                if ("lock" in str(e).lower() or "used by another" in str(e).lower()) and os.path.exists(user_data_dir):
-                    print(f"   ⚠️ Profile locked, cloning to temporary directory...")
-                    log_to_ui("⚠️ Profile locked, cloning to temporary directory...")
-                    temp_dir_obj = tempfile.TemporaryDirectory(prefix="chrome_profile_")
-                    actual_user_data_dir = temp_dir_obj.name
-                    try:
-                        print(f"      Cloning profile... (this may take a few seconds)")
-                        self._robust_copytree(user_data_dir, actual_user_data_dir)
-                        context = await p.chromium.launch_persistent_context(
-                            actual_user_data_dir,
-                            headless=headless,
-                            executable_path=executable_path,
-                            channel="chrome" if not executable_path else None,
-                            args=launch_args
-                        )
-                    except Exception as clone_e:
-                        print(f"      ❌ Clone failed: {clone_e}. Falling back to non-persistent context.")
-                        log_to_ui("❌ Profile clone failed. Using non-persistent context.", type="error")
-                        # Fallback to non-persistent
-                        browser = await p.chromium.launch(headless=headless, channel="chrome" if not executable_path else None, executable_path=executable_path)
-                        context = await browser.new_context()
-                else:
-                    # Strategy 3: Non-persistent launch with Chrome channel
-                    try:
-                        print(f"   🔄 Falling back to non-persistent Chrome...")
-                        log_to_ui("🔄 Falling back to non-persistent Chrome launch...")
-                        browser = await p.chromium.launch(headless=headless, channel="chrome" if not executable_path else None, executable_path=executable_path)
-                        context = await browser.new_context()
-                    except Exception as e2:
-                        # Strategy 4: Bundled Chromium
-                        print(f"   ❌ Chrome launch failed: {e2}. Falling back to bundled Chromium.")
-                        log_to_ui("❌ Chrome launch failed. Falling back to bundled Chromium.", type="error")
-                        browser = await p.chromium.launch(headless=headless)
-                        context = await browser.new_context()
+                    # Strategy 2: Clone profile if locked
+                    if ("lock" in str(e).lower() or "used by another" in str(e).lower()) and os.path.exists(user_data_dir):
+                        print(f"   ⚠️ Profile locked, cloning to temporary directory...")
+                        log_to_ui("⚠️ Profile locked, cloning to temporary directory...")
+                        temp_dir_obj = tempfile.TemporaryDirectory(prefix="chrome_profile_")
+                        actual_user_data_dir = temp_dir_obj.name
+                        try:
+                            print(f"      Cloning profile... (this may take a few seconds)")
+                            self._robust_copytree(user_data_dir, actual_user_data_dir)
+                            context = await p.chromium.launch_persistent_context(
+                                actual_user_data_dir,
+                                headless=headless,
+                                executable_path=executable_path,
+                                channel="chrome" if not executable_path else None,
+                                args=launch_args
+                            )
+                        except Exception as clone_e:
+                            print(f"      ❌ Clone failed: {clone_e}. Falling back to non-persistent context.")
+                            log_to_ui("❌ Profile clone failed. Using non-persistent context.", type="error")
+                            # Fallback to non-persistent
+                            browser = await p.chromium.launch(headless=headless, channel="chrome" if not executable_path else None, executable_path=executable_path)
+                            context = await browser.new_context()
+                    else:
+                        # Strategy 3: Non-persistent launch with Chrome channel
+                        try:
+                            print(f"   🔄 Falling back to non-persistent Chrome...")
+                            log_to_ui("🔄 Falling back to non-persistent Chrome launch...")
+                            browser = await p.chromium.launch(headless=headless, channel="chrome" if not executable_path else None, executable_path=executable_path)
+                            context = await browser.new_context()
+                        except Exception as e2:
+                            # Strategy 4: Bundled Chromium
+                            print(f"   ❌ Chrome launch failed: {e2}. Falling back to bundled Chromium.")
+                            log_to_ui("❌ Chrome launch failed. Falling back to bundled Chromium.", type="error")
+                            browser = await p.chromium.launch(headless=headless)
+                            context = await browser.new_context()
 
             page = context.pages[0] if context.pages else await context.new_page()
             

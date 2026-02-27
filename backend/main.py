@@ -1078,7 +1078,7 @@ def get_settings():
 
 @app.post("/api/settings")
 def update_settings(settings: Settings):
-    config_manager.save_config(settings.dict())
+    config_manager.save_config(settings.model_dump())
     return {"status": "success"}
 
 @app.get("/api/health")
