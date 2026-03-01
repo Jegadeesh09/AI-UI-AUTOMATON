@@ -169,6 +169,10 @@ class StoryRename(BaseModel):
     new_id: str
     suite: str
 
+class ParallelRunRequest(BaseModel):
+    suite: str
+    stories: List[str]
+
 class Settings(BaseModel):
     GEMINI_API_KEY: Optional[str] = None
     GPT_API_KEY: Optional[str] = None
@@ -477,6 +481,14 @@ async def stop_scan(suite: str = "Default"):
         
         feature_name = test_generator_service._extract_feature_name(bdd_content) or "RecordedSession"
         
+        # Check if the feature name is still 'RecordedSession'. If so, we'll use a unique temp name
+        # to avoid overwriting or creating duplicates later if the user renames it.
+        # Actually, the requirement says "If the user changes the Story Name... the system saves two items".
+        # This happens because we save it here as RecordedSession and then later as the new name.
+
+        # We'll save it as RecordedSession initially, but we should make sure we cleanup RecordedSession
+        # when a new story with a different name is approved.
+
         # Save BDD and Story files so they appear in the UI immediately
         stories_dir = f"backend/storage/suites/{suite}/stories"
         bdd_dir = f"backend/storage/suites/{suite}/bdd"
@@ -509,6 +521,18 @@ async def stop_scan(suite: str = "Default"):
 async def approve_bdd(payload: BDDApproval, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())
     suite = payload.suite or "Default"
+
+    # Handle the "RecordedSession" cleanup if user renamed the feature
+    from backend.generator.test_generator_service import test_generator_service
+    new_story_id = test_generator_service._extract_feature_name(payload.bdd_content) or payload.story_id
+
+    # If the current saved story is 'RecordedSession' and it's being approved with a different name,
+    # delete the old 'RecordedSession' files to prevent duplicates.
+    if new_story_id != "RecordedSession":
+        try:
+            delete_script("RecordedSession", scope="full", suite=suite)
+        except: pass # It might not exist as RecordedSession
+
     jobs[job_id] = {"status": "pending", "story_id": payload.story_id}
     
     # Run in thread to avoid async issues
@@ -597,6 +621,41 @@ def update_history_on_delete(suite, story=None):
     except Exception as e:
         print(f"Error updating history on delete: {e}")
 
+@app.post("/api/run-tests-parallel")
+async def run_tests_parallel(req: ParallelRunRequest):
+    suite = req.suite
+    stories = req.stories
+
+    if not stories:
+        return {"passed": 0, "failed": 0, "results": []}
+
+    semaphore = asyncio.Semaphore(5)
+
+    async def run_single_test(story_id):
+        async with semaphore:
+            # We call the existing run_test logic but in a way that handles async
+            # and doesn't block other tests.
+            # Since run_test is currently sync, we'll use run_in_executor
+            loop = asyncio.get_event_loop()
+            test_req = RunTestRequest(story_id=story_id, suite=suite)
+            try:
+                result = await loop.run_in_executor(executor, run_test, test_req)
+                return story_id, result
+            except Exception as e:
+                return story_id, {"success": False, "error": str(e)}
+
+    tasks = [run_single_test(sid) for sid in stories]
+    executed_results = await asyncio.gather(*tasks)
+
+    passed = sum(1 for _, r in executed_results if r.get("success"))
+    failed = len(executed_results) - passed
+
+    return {
+        "passed": passed,
+        "failed": failed,
+        "results": [{"story_id": sid, "result": r} for sid, r in executed_results]
+    }
+
 @app.post("/api/run-test")
 def run_test(req: RunTestRequest):
     story_id = req.story_id
@@ -683,7 +742,7 @@ def run_test(req: RunTestRequest):
         if inc_mode:
             env["INC_MODE"] = "true"
 
-        log_to_ui(f"🏃 Starting test execution for {story_id}...")
+        log_to_ui(f"[{story_id}] 🏃 Starting test execution...")
 
         # We use subprocess.Popen to stream logs to the UI
         process = subprocess.Popen(
@@ -700,8 +759,8 @@ def run_test(req: RunTestRequest):
         for line in iter(process.stdout.readline, ""):
             line_str = line.strip()
             if line_str:
-                print(f"pytest: {line_str}")
-                log_to_ui(line_str)
+                print(f"pytest ({story_id}): {line_str}")
+                log_to_ui(f"[{story_id}] {line_str}")
                 full_stdout.append(line_str)
 
         process.stdout.close()

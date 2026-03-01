@@ -10,6 +10,8 @@ const ExecutionTab = ({ settings, onRefreshSettings }) => {
   const [suites, setSuites] = useState([]);
   const [expandedSuites, setExpandedSuites] = useState({});
   const [executing, setExecuting] = useState(null);
+  const [selectedScripts, setSelectedScripts] = useState({}); // {suiteName: [storyId1, storyId2]}
+  const [isParallelRunning, setIsParallelRunning] = useState(false);
   const [results, setResults] = useState({});
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [reportModal, setReportModal] = useState({ isOpen: false, url: '', storyId: '', suite: '' });
@@ -29,6 +31,53 @@ const ExecutionTab = ({ settings, onRefreshSettings }) => {
       ...prev,
       [suiteName]: !prev[suiteName]
     }));
+  };
+
+  const handleCheckboxChange = (suiteName, storyId) => {
+    setSelectedScripts(prev => {
+      const currentSelected = prev[suiteName] || [];
+      if (currentSelected.includes(storyId)) {
+        return {
+          ...prev,
+          [suiteName]: currentSelected.filter(id => id !== storyId)
+        };
+      } else {
+        return {
+          ...prev,
+          [suiteName]: [...currentSelected, storyId]
+        };
+      }
+    });
+  };
+
+  const runParallelTests = async (suiteName) => {
+    const scripts = selectedScripts[suiteName] || [];
+    if (scripts.length === 0) {
+      setToast({ show: true, message: 'Please select at least one script to run.', type: 'info' });
+      return;
+    }
+
+    setIsParallelRunning(true);
+    setToast({ show: true, message: `Starting parallel execution of ${scripts.length} scripts...`, type: 'info' });
+
+    try {
+      const res = await axios.post('http://localhost:8000/api/run-tests-parallel', {
+        suite: suiteName,
+        stories: scripts
+      });
+
+      setToast({
+        show: true,
+        message: `Parallel execution completed. Passed: ${res.data.passed}, Failed: ${res.data.failed}`,
+        type: res.data.failed === 0 ? 'success' : 'error'
+      });
+
+      fetchScripts();
+    } catch (err) {
+      setToast({ show: true, message: 'Parallel execution failed: ' + err.message, type: 'error' });
+    } finally {
+      setIsParallelRunning(false);
+    }
   };
 
   const runTest = async (storyId, suite) => {
@@ -212,19 +261,30 @@ const ExecutionTab = ({ settings, onRefreshSettings }) => {
       
       {suites.map(suiteGroup => (
         <div key={suiteGroup.suite} className="space-y-3">
-          <button 
-            onClick={() => toggleSuite(suiteGroup.suite)}
-            className="w-full flex items-center justify-between p-4 bg-zinc-900/30 rounded-lg border border-zinc-800 hover:bg-zinc-900/50 transition-colors group"
-          >
-            <div className="flex items-center gap-3">
-              <BookOpen size={18} className="text-blue-400" />
-              <span className="font-bold text-zinc-200">{suiteGroup.suite}</span>
-              <span className="text-xs px-2 py-0.5 bg-zinc-800 text-zinc-500 rounded-full group-hover:text-zinc-300">
-                {suiteGroup.scripts.length} Scripts
-              </span>
-            </div>
-            {expandedSuites[suiteGroup.suite] ? <ChevronDown size={20} className="text-zinc-500" /> : <ChevronRight size={20} className="text-zinc-500" />}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => toggleSuite(suiteGroup.suite)}
+              className="flex-1 flex items-center justify-between p-4 bg-zinc-900/30 rounded-lg border border-zinc-800 hover:bg-zinc-900/50 transition-colors group"
+            >
+              <div className="flex items-center gap-3">
+                <BookOpen size={18} className="text-blue-400" />
+                <span className="font-bold text-zinc-200">{suiteGroup.suite}</span>
+                <span className="text-xs px-2 py-0.5 bg-zinc-800 text-zinc-500 rounded-full group-hover:text-zinc-300">
+                  {suiteGroup.scripts.length} Scripts
+                </span>
+              </div>
+              {expandedSuites[suiteGroup.suite] ? <ChevronDown size={20} className="text-zinc-500" /> : <ChevronRight size={20} className="text-zinc-500" />}
+            </button>
+
+            <button
+              onClick={() => runParallelTests(suiteGroup.suite)}
+              disabled={isParallelRunning || (selectedScripts[suiteGroup.suite]?.length || 0) === 0}
+              className="px-6 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:hover:bg-emerald-600 text-white font-bold rounded-lg flex items-center gap-2 transition-all shadow-lg shadow-emerald-900/20"
+            >
+              {isParallelRunning ? <Loader2 className="animate-spin" size={18} /> : <Play size={18} />}
+              Run Agent
+            </button>
+          </div>
 
           {expandedSuites[suiteGroup.suite] && (
             <div className="pl-6 space-y-4 animate-in slide-in-from-top-2 duration-200">
@@ -232,11 +292,19 @@ const ExecutionTab = ({ settings, onRefreshSettings }) => {
                 <div className="text-xs text-zinc-600 italic py-2">No scripts in this suite</div>
               ) : (
                 suiteGroup.scripts.map(script => (
-                  <div key={script.story_id} className="surface p-6 rounded-lg flex flex-col gap-4 border-l-2 border-blue-600/30">
+                  <div key={script.story_id} className="surface p-6 rounded-lg flex flex-col gap-4 border-l-2 border-blue-600/30 relative">
                     <div className="flex justify-between items-center">
-                      <div>
-                        <h3 className="font-bold text-lg">{script.story_id}</h3>
-                        <p className="text-[10px] text-zinc-500 uppercase tracking-widest">{script.filename}</p>
+                      <div className="flex items-center gap-4">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 rounded border-zinc-700 bg-zinc-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-zinc-900"
+                          checked={(selectedScripts[suiteGroup.suite] || []).includes(script.story_id)}
+                          onChange={() => handleCheckboxChange(suiteGroup.suite, script.story_id)}
+                        />
+                        <div>
+                          <h3 className="font-bold text-lg">{script.story_id}</h3>
+                          <p className="text-[10px] text-zinc-500 uppercase tracking-widest">{script.filename}</p>
+                        </div>
                       </div>
                       <div className="flex gap-2">
                         {settings?.SHOW_CODE_ICON && (

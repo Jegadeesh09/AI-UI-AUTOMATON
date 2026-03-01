@@ -26,6 +26,8 @@ const UploadTab = ({
   const [showNewSuiteInput, setShowNewSuiteInput] = useState(false);
   const [newSuiteName, setNewSuiteName] = useState('');
   const [showNewStoryInput, setShowNewStoryInput] = useState(false);
+  const [selectedScripts, setSelectedScripts] = useState([]);
+  const [isParallelRunning, setIsParallelRunning] = useState(false);
   const [bddModal, setBddModal] = useState({ isOpen: false, content: '', storyId: '' });
   const [errorModal, setErrorModal] = useState({ isOpen: false, data: null });
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
@@ -96,6 +98,39 @@ const UploadTab = ({
     setStoryName('');
     setIsUpdate(false);
     setShowNewStoryInput(false);
+  };
+
+  const handleCheckboxChange = (storyId) => {
+    setSelectedScripts(prev =>
+      prev.includes(storyId) ? prev.filter(id => id !== storyId) : [...prev, storyId]
+    );
+  };
+
+  const runParallelTests = async () => {
+    if (selectedScripts.length === 0) {
+      setToast({ show: true, message: 'Please select at least one script to run.', type: 'info' });
+      return;
+    }
+
+    setIsParallelRunning(true);
+    setToast({ show: true, message: `Starting parallel execution of ${selectedScripts.length} scripts...`, type: 'info' });
+
+    try {
+      const res = await axios.post('http://localhost:8000/api/run-tests-parallel', {
+        suite: selectedSuite,
+        stories: selectedScripts
+      });
+
+      setToast({
+        show: true,
+        message: `Parallel execution completed. Passed: ${res.data.passed}, Failed: ${res.data.failed}`,
+        type: res.data.failed === 0 ? 'success' : 'error'
+      });
+    } catch (err) {
+      setToast({ show: true, message: 'Parallel execution failed: ' + err.message, type: 'error' });
+    } finally {
+      setIsParallelRunning(false);
+    }
   };
 
   const pollJobStatus = async (jobId) => {
@@ -579,6 +614,16 @@ const UploadTab = ({
                    >
                      <Trash2 size={16} />
                    </button>
+                   {selectedSuite && (
+                      <button
+                        onClick={runParallelTests}
+                        disabled={isParallelRunning || selectedScripts.length === 0}
+                        className="px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:hover:bg-emerald-600 text-white text-[11px] font-bold rounded flex items-center gap-2 transition-all"
+                      >
+                        {isParallelRunning ? <Loader2 className="animate-spin" size={14} /> : <Play size={14} />}
+                        Run Agent
+                      </button>
+                   )}
                 </div>
                 {showNewSuiteInput && (
                    <div className="mt-2 flex gap-2 animate-in fade-in slide-in-from-top-1">
@@ -603,14 +648,26 @@ const UploadTab = ({
                 <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Story File Name</label>
                 <div className="flex gap-2">
                    <div className="relative flex-1" onClick={() => !selectedSuite && checkSuite()}>
-                      <CustomDropdown 
-                        label="Story"
-                        value={storyName}
-                        options={Array.isArray(existingStories) ? existingStories.map(s => s.story_id) : []}
-                        onChange={handleStorySelect}
-                        placeholder="-- Select Story --"
-                        disabled={!selectedSuite}
-                      />
+                      <div className="flex gap-2 items-center bg-zinc-950 border border-zinc-800 rounded p-1">
+                        <div className="flex-1">
+                          <CustomDropdown
+                            label="Story"
+                            value={storyName}
+                            options={Array.isArray(existingStories) ? existingStories.map(s => s.story_id) : []}
+                            onChange={handleStorySelect}
+                            placeholder="-- Select Story --"
+                            disabled={!selectedSuite}
+                          />
+                        </div>
+                        {storyName && (
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 rounded border-zinc-700 bg-zinc-800 text-blue-600 focus:ring-blue-500 mr-2"
+                            checked={selectedScripts.includes(storyName)}
+                            onChange={() => handleCheckboxChange(storyName)}
+                          />
+                        )}
+                      </div>
                    </div>
                    <button 
                      className={`px-3 flex items-center gap-2 rounded border transition-all ${showNewStoryInput ? 'bg-zinc-800 border-zinc-700 text-white' : 'btn-secondary'}`}

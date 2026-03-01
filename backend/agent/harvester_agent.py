@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import asyncio
 import shutil
 import tempfile
@@ -27,34 +28,53 @@ GET_BEST_SELECTOR_JS = r"""
     };
 
     // 1. Data Test IDs
-    const testIdAttrs = ['data-testid', 'data-test', 'data-qa', 'data-cy'];
+    const testIdAttrs = ['data-testid', 'data-test', 'data-qa', 'data-cy', 'data-automation-id'];
     for (const attr of testIdAttrs) {
-        if (element.getAttribute(attr)) return `[${attr}='${element.getAttribute(attr)}']`;
+        const val = element.getAttribute(attr);
+        if (val) return `[${attr}='${val}']`;
     }
     
-    // 2. ID
-    if (element.id && !element.id.match(/[0-9]{5,}/)) return `#${element.id}`;
+    // 2. ID (if stable)
+    if (element.id && !element.id.match(/[0-9]{5,}/) && !/^(ember|react|vue|__)/i.test(element.id)) {
+        return `#${element.id}`;
+    }
     
-    // 3. Name or Title
-    if (element.getAttribute('name')) return `${element.tagName.toLowerCase()}[name='${element.getAttribute('name')}']`;
-    if (element.getAttribute('title')) return `${element.tagName.toLowerCase()}[title='${element.getAttribute('title')}']`;
+    // 3. Name or Placeholder (for inputs)
+    if (element.name) return `${element.tagName.toLowerCase()}[name='${element.name}']`;
+    const placeholder = element.getAttribute('placeholder');
+    if (placeholder) return `${element.tagName.toLowerCase()}[placeholder='${placeholder}']`;
 
-    // 4. ARIA Label or Placeholder
+    // 4. ARIA Label or Title
     const ariaLabel = element.getAttribute('aria-label');
     if (ariaLabel) return `${element.tagName.toLowerCase()}[aria-label='${ariaLabel}']`;
-    if (element.getAttribute('placeholder')) return `${element.tagName.toLowerCase()}[placeholder='${element.getAttribute('placeholder')}']`;
+    const title = element.getAttribute('title');
+    if (title) return `${element.tagName.toLowerCase()}[title='${title}']`;
 
     // 5. Role + Text (Semantic)
     const role = element.getAttribute('role');
-    const text = element.innerText.trim().replace(/\s+/g, ' ');
-    if (role && text && text.length < 50) {
-        return `//${element.tagName.toLowerCase()}[@role='${role}' and contains(normalize-space(.), '${text}')]`;
-    }
-    if (text && text.length > 0 && text.length < 50 && ['BUTTON', 'A', 'SPAN', 'LABEL', 'H1', 'H2', 'H3'].includes(element.tagName)) {
-        return `//${element.tagName.toLowerCase()}[contains(normalize-space(.), '${text}')]`;
+    const text = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' ');
+    if (text && text.length > 0 && text.length < 60) {
+        const safeText = text.replace(/'/g, "\\'").substring(0, 40);
+        if (['BUTTON', 'A', 'LABEL', 'H1', 'H2', 'H3'].includes(element.tagName)) {
+            return `//${element.tagName.toLowerCase()}[contains(normalize-space(.), '${safeText}')]`;
+        }
+        if (role) {
+            return `//*[@role='${role}' and contains(normalize-space(.), '${safeText}')]`;
+        }
     }
 
-    // 6. Final fallback: Robust XPath
+    // 6. Descriptive CSS fallback
+    let cssPath = element.tagName.toLowerCase();
+    if (element.className && typeof element.className === 'string') {
+        const classes = element.className.split(/[ ]+/).filter(c => c && !/^(v-|active|hover|focus|selected)/i.test(c)).slice(0, 2);
+        if (classes.length > 0) cssPath += '.' + classes.join('.');
+    }
+
+    // Try to see if this CSS path is unique enough (very rough check)
+    // For now we just return it if it looks better than a raw tag
+    if (cssPath.includes('.')) return cssPath;
+
+    // 7. Final fallback: Robust XPath
     return getPath(element);
 }
 """
@@ -599,21 +619,26 @@ class HarvesterAgent:
         
         if step.startswith("TYPE:"):
             strategies.extend([
-                lambda q: page.get_by_role("textbox", name=q),
-                lambda q: page.get_by_role("search", name=q),
-                lambda q: page.get_by_placeholder(q),
-                lambda q: page.get_by_label(q)
+                lambda q: page.get_by_role("textbox", name=re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_placeholder(re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_label(re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_role("search", name=re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_test_id(q),
+                lambda q: page.locator(f"input[name='{q}']"),
+                lambda q: page.locator(f"input[id='{q}']")
             ])
         elif step.startswith("CLICK:") or step.startswith("SELECT:"):
             strategies.extend([
-                lambda q: page.get_by_role("button", name=q),
-                lambda q: page.get_by_role("link", name=q),
-                lambda q: page.get_by_role("combobox", name=q),
-                lambda q: page.get_by_role("listbox", name=q),
-                lambda q: page.get_by_role("menuitem", name=q),
-                lambda q: page.get_by_role("tab", name=q),
-                lambda q: page.get_by_role("checkbox", name=q),
-                lambda q: page.get_by_role("radio", name=q)
+                lambda q: page.get_by_role("button", name=re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_role("link", name=re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_role("combobox", name=re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_role("listbox", name=re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_role("menuitem", name=re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_role("tab", name=re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_role("checkbox", name=re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_role("radio", name=re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_text(re.compile(rf".*{q}.*", re.I)),
+                lambda q: page.get_by_test_id(q)
             ])
         
         # General text match fallback
