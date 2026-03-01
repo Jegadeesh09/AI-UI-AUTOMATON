@@ -85,17 +85,28 @@ RECORD_SCRIPT_JS = """
             }
         }
 
-        // 7. Last resort: Full XPath
+        // 7. Last resort: Full XPath (Iterative to avoid recursion issues)
         const getXPath = (node) => {
-            if (node.id && !node.id.match(/[0-9]{5,}/)) return `//*[@id='${node.id}']`;
-            if (node === document.body) return '/html/body';
-            let ix = 0;
-            let siblings = node.parentNode.childNodes;
-            for (let i = 0; i < siblings.length; i++) {
-                let sibling = siblings[i];
-                if (sibling === node) return getXPath(node.parentNode) + '/' + node.tagName.toLowerCase() + '[' + (ix + 1) + ']';
-                if (sibling.nodeType === 1 && sibling.tagName === node.tagName) ix++;
+            const parts = [];
+            while (node && node.nodeType === Node.ELEMENT_NODE) {
+                if (node.id && !node.id.match(/[0-9]{5,}/)) {
+                    parts.unshift(`//*[@id='${node.id}']`);
+                    return parts.join('');
+                }
+                let index = 0;
+                let sibling = node.previousSibling;
+                while (sibling) {
+                    if (sibling.nodeType === Node.ELEMENT_NODE && sibling.tagName === node.tagName) {
+                        index++;
+                    }
+                    sibling = sibling.previousSibling;
+                }
+                const tagName = node.tagName.toLowerCase();
+                const pathPart = index > 0 ? `${tagName}[${index + 1}]` : tagName;
+                parts.unshift(pathPart);
+                node = node.parentNode;
             }
+            return '/' + parts.join('/');
         };
         return getXPath(el);
     };
@@ -111,18 +122,21 @@ RECORD_SCRIPT_JS = """
             const last = JSON.parse(lastAction);
             if (last.action === 'TYPE' && last.selector === data.selector) {
                 // Skip if it's the same field, but don't set lastAction yet so we capture the final value on blur/change
-                // Actually handleInputChange already handles this by listening to 'change'/'blur'
             }
         }
 
         lastAction = currentAction;
 
         if (window.emitRecorderAction) {
-            window.emitRecorderAction({
-                ...data,
-                timestamp: Date.now(),
-                url: window.location.href
-            });
+            try {
+                await window.emitRecorderAction({
+                    ...data,
+                    timestamp: Date.now(),
+                    url: window.location.href
+                });
+            } catch (e) {
+                console.error('AI Automation Recorder: Failed to emit action', e);
+            }
         }
     };
 
@@ -132,19 +146,33 @@ RECORD_SCRIPT_JS = """
         logAction({ action: 'CLICK', selector, text: e.target.innerText?.trim().substring(0, 50) });
     }, true);
 
+    let typeTimeout = null;
     const handleInputChange = (e) => {
         if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) {
             const el = e.target;
+            const isText = ['text', 'password', 'email', 'number', 'tel', 'url', 'search'].includes(el.type) || el.tagName === 'TEXTAREA';
             
-            // For text inputs, only capture on BLUR to avoid duplicates with 'change'
-            // and to avoid capturing every keystroke.
-            if (['text', 'password', 'email', 'number', 'tel', 'url', 'search'].includes(el.type) || el.tagName === 'TEXTAREA') {
-                if (e.type !== 'blur') return; 
+            if (isText) {
+                if (e.type === 'input') {
+                    if (typeTimeout) clearTimeout(typeTimeout);
+                    typeTimeout = setTimeout(() => {
+                        const selector = getSelector(el);
+                        const sensitive = isSensitive(el);
+                        logAction({
+                            action: 'TYPE',
+                            selector,
+                            value: sensitive ? '<Sensitive Data>' : el.value,
+                            label: el.placeholder || el.name || el.getAttribute('aria-label') || el.id || ''
+                        });
+                    }, 500);
+                    return;
+                }
             }
             
-            // For checkboxes, radios, and SELECT, capture on CHANGE
             if (['checkbox', 'radio'].includes(el.type) || el.tagName === 'SELECT') {
                 if (e.type !== 'change') return;
+            } else if (isText) {
+                if (e.type !== 'change' && e.type !== 'blur') return;
             }
 
             const selector = getSelector(el);
@@ -153,25 +181,17 @@ RECORD_SCRIPT_JS = """
             const action = el.tagName === 'SELECT' ? 'SELECT' : 'TYPE';
             const label = el.placeholder || el.name || el.getAttribute('aria-label') || el.id || '';
             
-            let extra = {};
             if (el.tagName === 'SELECT') {
                 const selectedOption = el.options[el.selectedIndex];
-                extra.text = selectedOption ? selectedOption.text : '';
-                // Also capture the value/label for better BDD generation
-                logAction({ action: 'SELECT', selector, value: selectedOption.value, label: label, text: selectedOption.text });
+                logAction({ action: 'SELECT', selector, value: selectedOption.value, label: label, text: selectedOption ? selectedOption.text : '' });
                 return;
             }
 
-            logAction({ 
-                action, 
-                selector, 
-                value, 
-                label,
-                ...extra
-            });
+            logAction({ action, selector, value, label });
         }
     };
 
+    document.addEventListener('input', handleInputChange, true);
     document.addEventListener('change', handleInputChange, true);
     document.addEventListener('blur', handleInputChange, true);
 
@@ -247,16 +267,21 @@ class RecorderAgent:
 
     async def _on_action(self, action):
         url = action.get('url', '').lower()
-        # Filter out Google, chrome://, and about:blank
-        if 'google.com' in url or 'chrome://' in url or 'about:blank' in url:
+        # Filter out chrome internal pages and empty pages
+        if 'chrome://' in url or 'about:blank' in url:
             return
-        print(f"🎥 [Recorder] Captured: {action.get('action')} at {url}")
+
+        msg = f"🎥 [Recorder] Captured: {action.get('action')} on {action.get('selector') or url}"
+        print(msg)
+        from backend.utils.logger import log_to_ui
+        log_to_ui(msg)
+
         self.actions.append(action)
 
     async def start_session(self):
+        print("🎥 [RecorderAgent] Initializing new session...")
         config = config_manager.get_config()
         inc_mode = config.get("INC_MODE", False)
-        print(f"DEBUG: RecorderAgent.start_session called. INC_MODE in config: {inc_mode}")
 
         # Cleanup any existing session first
         if self.p or self.browser or self.context:
@@ -280,17 +305,9 @@ class RecorderAgent:
 
         try:
             if inc_mode:
-                # 🛠️ TRULY INCOGNITO: Launch regular browser with --incognito and use a fresh context
-                # Force --incognito in launch args
                 if "--incognito" not in launch_args:
                     launch_args.append("--incognito")
-
-                launch_args.extend([
-                    "--no-first-run",
-                    "--no-default-browser-check",
-                    "--no-sandbox"
-                ])
-                print(f"   🚀 Launching with args: {launch_args}")
+                launch_args.extend(["--no-first-run", "--no-default-browser-check", "--no-sandbox"])
                 self.browser = await self.p.chromium.launch(
                     executable_path=chrome_exe if chrome_exe else None,
                     channel="chrome" if not chrome_exe else None,
@@ -298,13 +315,9 @@ class RecorderAgent:
                     args=launch_args
                 )
                 self.context = await self.browser.new_context()
-                print(f"   ✅ Browser launched in Incognito mode. Context is incognito: {self.context}")
             else:
-                # 🛠️ NORMAL MODE: Use persistent context to maintain state/profile
                 user_data_dir = chrome_user_data if chrome_user_data and os.path.exists(chrome_user_data) else os.path.join(os.getcwd(), "backend/storage/user_data")
                 os.makedirs(user_data_dir, exist_ok=True)
-
-                print(f"   Using Profile: {user_data_dir}")
                 self.context = await self.p.chromium.launch_persistent_context(
                     user_data_dir,
                     executable_path=chrome_exe if chrome_exe else None,
@@ -312,27 +325,55 @@ class RecorderAgent:
                     headless=False,
                     args=launch_args
                 )
-                self.browser = None # In persistent mode, the context handles the browser lifecycle
-                print("   ✅ Browser launched in Normal (Persistent) mode.")
+                self.browser = None
 
         except Exception as e:
             print(f"⚠️ RecorderAgent: Failed to launch browser with primary strategy ({e}). Falling back to fresh bundled Chromium.")
-            # Absolute fallback
             fallback_args = ["--incognito"] if inc_mode else []
             self.browser = await self.p.chromium.launch(headless=False, args=fallback_args)
             self.context = await self.browser.new_context()
+
+        # Context-wide setup
         await self.context.expose_function("emitRecorderAction", self._on_action)
         await self.context.add_init_script(RECORD_SCRIPT_JS)
         
-        page = await self.context.new_page()
+        # Listen for new pages
+        self.context.on("page", lambda p: asyncio.create_task(self._setup_new_page(p)))
+
+        # Get initial page
+        if self.context.pages:
+            page = self.context.pages[0]
+        else:
+            page = await self.context.new_page()
         
-        # Listen for browser/page closure
-        page.on("close", lambda p: asyncio.create_task(self._handle_auto_stop()))
-        self.browser.on("disconnected", lambda b: asyncio.create_task(self._handle_auto_stop()))
+        await self._setup_new_page(page)
+
+        if self.browser:
+            self.browser.on("disconnected", lambda b: asyncio.create_task(self._handle_auto_stop()))
 
         default_url = config.get("DEFAULT_URL", "https://www.google.com")
-        await page.goto(default_url)
+        print(f"🌐 Navigating to initial URL: {default_url}")
+        try:
+            await page.goto(default_url, wait_until="domcontentloaded", timeout=15000)
+        except Exception as e:
+            print(f"⚠️ Initial navigation timed out or failed: {e}")
+
         return page
+
+    async def _setup_new_page(self, page):
+        print(f"📄 [Recorder] Page tracked: {page.url}")
+        # Inject script immediately for existing pages (init_script only works for future navigations)
+        try:
+            await page.evaluate(RECORD_SCRIPT_JS)
+        except: pass
+        page.on("close", lambda p: asyncio.create_task(self._handle_page_close(p)))
+
+    async def _handle_page_close(self, page):
+        # Small delay to see if other pages remain
+        await asyncio.sleep(0.5)
+        if self.context and not self.context.pages:
+            print("🛑 All pages closed. Auto-stopping recorder.")
+            await self._handle_auto_stop()
 
     async def _handle_auto_stop(self):
         if self.status == "recording":
@@ -343,10 +384,14 @@ class RecorderAgent:
         if self.status == "idle" and not self.context:
             return self.actions
 
+        if self.status == "completed" and not self.context:
+            return self.actions
+
         try:
             self.status = "completed"
-            print("💾 RecorderAgent: Closing browser and context...")
-            await asyncio.sleep(0.5)
+            print(f"💾 RecorderAgent: Closing browser and context (Captured {len(self.actions)} actions)...")
+            # Wait a bit for pending actions to be received
+            await asyncio.sleep(1.0)
             
             # Close context first
             if self.context:

@@ -279,7 +279,7 @@ const ExecutionTab = ({ settings, onRefreshSettings }) => {
             <button
               onClick={() => runParallelTests(suiteGroup.suite)}
               disabled={isParallelRunning || (selectedScripts[suiteGroup.suite]?.length || 0) === 0}
-              className="px-6 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:hover:bg-emerald-600 text-white font-bold rounded-lg flex items-center gap-2 transition-all shadow-lg shadow-emerald-900/20"
+              className="btn-primary flex items-center gap-2 transition-all disabled:opacity-50"
             >
               {isParallelRunning ? <Loader2 className="animate-spin" size={18} /> : <Play size={18} />}
               Run Agent
@@ -350,7 +350,7 @@ const ExecutionTab = ({ settings, onRefreshSettings }) => {
                         <button 
                           onClick={() => runTest(script.story_id, suiteGroup.suite)}
                           disabled={executing === script.story_id}
-                          className="btn-primary flex items-center gap-2 min-w-[120px] justify-center"
+                          className="btn-primary flex items-center gap-2 min-w-[120px] justify-center transition-all disabled:opacity-50"
                         >
                           {executing === script.story_id ? <Loader2 className="animate-spin" size={16} /> : <Play size={16} />}
                           Run Agent

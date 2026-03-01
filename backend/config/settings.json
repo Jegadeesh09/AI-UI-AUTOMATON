@@ -1,18 +1,4 @@
 {
-    "GEMINI_API_KEY": "AIzaSyDzxJC2rD4LHOrnyd0nX36swdHop8o9Rq0",
-    "GPT_API_KEY": "",
-    "DEEPSEEK_API_KEY": "",
-    "OLLAMA_BASE_URL": "http://localhost:11434",
-    "MODEL_NAME": "gemini-2.5-flash",
-    "LLM_PROVIDER": "Gemini",
-    "IS_PAID_LLM": true,
-    "HEADLESS_AGENT": false,
-    "HEADLESS_SCRIPT": false,
-    "INC_MODE": true,
-    "SHOW_CODE_ICON": true,
-    "CUSTOM_MODELS": [
-        "gemini-2.5-flash",
-        "moondream",
-        "starcoder2:7b"
-    ]
+    "DEFAULT_URL": "about:blank",
+    "INC_MODE": true
 }
